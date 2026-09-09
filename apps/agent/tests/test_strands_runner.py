@@ -1,7 +1,8 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
-from candidateloop.config import AgentSettings
+from candidateloop.config import AgentExecutionError, AgentSettings
 from candidateloop.repository import repository
 from candidateloop.runner import DeterministicAgentRunner
 from candidateloop.strands_runner import StrandsAgentRunner
@@ -10,6 +11,7 @@ from candidateloop.strands_tools import (
     STRANDS_TOOL_NAMES,
     StrandsRecruitingToolAdapter,
 )
+from candidateloop.tools import SAFE_CANDIDATE_STATUS_BODY
 from tests.scripted_model import ScriptedModel, final_response, parallel_tool_calls, tool_call
 
 
@@ -20,6 +22,25 @@ def strands_runner(*responses):
         model_id="scripted-test-model",
     )
     return StrandsAgentRunner(repository, settings, ScriptedModel(responses))
+
+
+def safe_seeded_pass(prefix: str = ""):
+    return (
+        tool_call(f"{prefix}1", "get_active_candidates"),
+        tool_call(f"{prefix}2", "get_interview_feedback", {"candidate_id": "cand_sarah"}),
+        tool_call(
+            f"{prefix}3",
+            "send_feedback_reminder",
+            {"candidate_id": "cand_sarah", "interviewer_id": "int_alex"},
+        ),
+        tool_call(f"{prefix}4", "get_candidate", {"candidate_id": "cand_david"}),
+        tool_call(f"{prefix}5", "send_candidate_status_update", {"candidate_id": "cand_david"}),
+        tool_call(f"{prefix}6", "get_interview_feedback", {"candidate_id": "cand_emily"}),
+        tool_call(f"{prefix}7", "create_human_decision", {"candidate_id": "cand_emily"}),
+        tool_call(f"{prefix}8", "get_candidate", {"candidate_id": "cand_marcus"}),
+        tool_call(f"{prefix}9", "record_no_action", {"candidate_id": "cand_marcus"}),
+        final_response(),
+    )
 
 
 def test_real_strands_loop_performs_seeded_safe_actions():
@@ -50,6 +71,20 @@ def test_real_strands_loop_performs_seeded_safe_actions():
     assert result.summary.no_action_needed == 1
     assert repository.candidate("cand_emily").stage == "Interview Complete"
     assert repository.candidate("cand_emily").human_decision_status == "pending"
+    david_messages = [
+        communication
+        for communication in repository.communications_for("cand_david")
+        if communication.type == "candidate_status_update"
+    ]
+    assert len(david_messages) == 1
+    assert david_messages[0].body == SAFE_CANDIDATE_STATUS_BODY.format(first_name="David")
+    assert repository.communications_for("cand_marcus") == []
+    assert repository.open_decision_for("cand_marcus") is None
+    assert repository.candidate("cand_marcus").next_interview_at.isoformat() == (
+        "2026-09-09T14:00:00+00:00"
+    )
+    assert {spec["name"] for spec in runner.model.tool_specs_history[0]} == STRANDS_TOOL_NAMES
+    assert "CandidateLoop operating policy" in runner.model.system_prompts[0]
 
 
 def test_strands_agent_registers_only_allowlisted_non_judgment_tools():
@@ -61,6 +96,7 @@ def test_strands_agent_registers_only_allowlisted_non_judgment_tools():
     assert set(agent.tool_names) == STRANDS_TOOL_NAMES
     assert not {
         "advance_candidate",
+        "hold_candidate",
         "reject_candidate",
         "hire_candidate",
         "rank_candidates",
@@ -68,6 +104,23 @@ def test_strands_agent_registers_only_allowlisted_non_judgment_tools():
         "resolve_decision",
     }.intersection(agent.tool_names)
     assert all(term not in name for name in agent.tool_names for term in FORBIDDEN_AGENT_TOOL_TERMS)
+    tool_configs = agent.tool_registry.get_all_tools_config()
+    assert set(tool_configs) == STRANDS_TOOL_NAMES
+    exposed_parameters = {
+        parameter
+        for config in tool_configs.values()
+        for parameter in config["inputSchema"]["json"]["properties"]
+    }
+    assert not {
+        "advance",
+        "hold",
+        "reject",
+        "hire",
+        "rank",
+        "score",
+        "resolution",
+        "decision",
+    }.intersection(exposed_parameters)
 
 
 def test_bedrock_model_uses_configured_model_and_region_without_invocation():
@@ -101,6 +154,7 @@ def test_strands_feedback_view_excludes_candidate_quality_evidence():
 def test_strands_parallel_duplicate_calls_create_one_operational_write():
     runner = strands_runner(
         tool_call("1", "get_active_candidates"),
+        tool_call("1a", "get_interview_feedback", {"candidate_id": "cand_sarah"}),
         parallel_tool_calls(
             (
                 "2a",
@@ -113,6 +167,12 @@ def test_strands_parallel_duplicate_calls_create_one_operational_write():
                 {"candidate_id": "cand_sarah", "interviewer_id": "int_alex"},
             ),
         ),
+        tool_call("3", "get_candidate", {"candidate_id": "cand_david"}),
+        tool_call("4", "send_candidate_status_update", {"candidate_id": "cand_david"}),
+        tool_call("5", "get_interview_feedback", {"candidate_id": "cand_emily"}),
+        tool_call("6", "create_human_decision", {"candidate_id": "cand_emily"}),
+        tool_call("7", "get_candidate", {"candidate_id": "cand_marcus"}),
+        tool_call("8", "record_no_action", {"candidate_id": "cand_marcus"}),
         final_response(),
     )
 
@@ -123,84 +183,135 @@ def test_strands_parallel_duplicate_calls_create_one_operational_write():
     ]
     assert len(reminders) == 1
     assert result.summary.reminders_sent == 1
-    assert result.summary.no_action_needed == 1
+    assert result.summary.no_action_needed == 2
 
 
 def test_repeated_strands_runs_prevent_all_duplicate_operational_writes():
-    first = strands_runner(
-        tool_call(
-            "1",
-            "send_feedback_reminder",
-            {"candidate_id": "cand_sarah", "interviewer_id": "int_alex"},
-        ),
-        tool_call("2", "send_candidate_status_update", {"candidate_id": "cand_david"}),
-        tool_call("3", "create_human_decision", {"candidate_id": "cand_emily"}),
-        final_response(),
-    )
+    first = strands_runner(*safe_seeded_pass("first_"))
     first.run()
     communication_count = len(repository.communications)
     decision_count = len(repository.decisions)
-    second = strands_runner(
-        tool_call(
-            "4",
-            "send_feedback_reminder",
-            {"candidate_id": "cand_sarah", "interviewer_id": "int_alex"},
-        ),
-        tool_call("5", "send_candidate_status_update", {"candidate_id": "cand_david"}),
-        tool_call("6", "create_human_decision", {"candidate_id": "cand_emily"}),
-        final_response(),
-    )
+    second = strands_runner(*safe_seeded_pass("second_"))
 
     result = second.run()
 
     assert len(repository.communications) == communication_count
     assert len(repository.decisions) == decision_count
     assert result.summary.actions_taken == 0
-    assert result.summary.no_action_needed == 3
+    assert result.summary.no_action_needed == 4
 
 
 def test_strands_cannot_schedule_without_human_advance():
-    runner = strands_runner(
-        tool_call(
-            "1",
-            "schedule_interview",
-            {"candidate_id": "cand_emily", "slot_id": "slot_panel_01"},
-        ),
-        final_response(),
-    )
+    runner = strands_runner(final_response())
+    adapter = StrandsRecruitingToolAdapter(repository, "run_schedule_boundary")
+    agent = runner.build_agent(adapter)
 
-    result = runner.run()
+    result = agent.tool.schedule_interview(candidate_id="cand_emily", slot_id="slot_panel_01")
 
     emily = repository.candidate("cand_emily")
-    assert result.summary.interviews_scheduled == 0
+    assert result["status"] == "error"
+    assert "explicit human advance" in result["content"][0]["text"]
+    assert adapter.summary.interviews_scheduled == 0
     assert emily.stage == "Interview Complete"
     assert emily.next_interview_at is None
     assert repository.available_slots()[0].available is True
 
 
 def test_strands_cannot_escalate_candidate_before_decision_ready():
-    runner = strands_runner(
-        tool_call("1", "create_human_decision", {"candidate_id": "cand_marcus"}),
-        final_response(),
-    )
+    runner = strands_runner(final_response())
+    adapter = StrandsRecruitingToolAdapter(repository, "run_decision_boundary")
+    agent = runner.build_agent(adapter)
 
-    result = runner.run()
+    result = agent.tool.create_human_decision(candidate_id="cand_marcus")
 
-    assert result.summary.human_decisions_created == 0
+    assert result["status"] == "error"
+    assert "complete interview feedback" in result["content"][0]["text"]
+    assert adapter.summary.human_decisions_created == 0
     assert repository.open_decision_for("cand_marcus") is None
     assert repository.candidate("cand_marcus").human_decision_status == "none"
 
 
 def test_strands_cannot_record_no_action_when_safe_work_is_due():
+    runner = strands_runner(final_response())
+    adapter = StrandsRecruitingToolAdapter(repository, "run_no_action_boundary")
+    agent = runner.build_agent(adapter)
+
+    result = agent.tool.record_no_action(candidate_id="cand_sarah")
+
+    assert result["status"] == "error"
+    assert "overdue pending feedback" in result["content"][0]["text"]
+    assert adapter.summary.no_action_needed == 0
+    assert repository.action_views("run_no_action_boundary") == []
+
+
+def test_incomplete_strands_run_rolls_back_partial_writes():
     runner = strands_runner(
-        tool_call("1", "record_no_action", {"candidate_id": "cand_sarah"}),
+        tool_call("1", "get_active_candidates"),
+        tool_call(
+            "2",
+            "send_feedback_reminder",
+            {"candidate_id": "cand_sarah", "interviewer_id": "int_alex"},
+        ),
         final_response(),
     )
 
-    result = runner.run()
+    with pytest.raises(AgentExecutionError, match="rolled back"):
+        runner.run()
 
-    assert result.summary.no_action_needed == 0
-    assert repository.action_views(result.run_id) == []
+    assert repository.communications == {}
+    assert repository.actions == {}
+
+
+def test_wrong_skipped_tool_cannot_satisfy_complete_strands_pass():
+    runner = strands_runner(
+        tool_call("1", "get_active_candidates"),
+        tool_call("2", "send_candidate_status_update", {"candidate_id": "cand_sarah"}),
+        tool_call("3", "send_candidate_status_update", {"candidate_id": "cand_david"}),
+        tool_call("4", "create_human_decision", {"candidate_id": "cand_emily"}),
+        tool_call("5", "record_no_action", {"candidate_id": "cand_marcus"}),
+        final_response(),
+    )
+
+    with pytest.raises(AgentExecutionError, match="rolled back"):
+        runner.run()
+
+    assert repository.communications == {}
+    assert repository.decisions == {}
+    assert repository.actions == {}
+
+
+def test_api_executes_the_real_strands_loop(monkeypatch):
+    runner = strands_runner(*safe_seeded_pass("api_"))
+    monkeypatch.setattr("api.main.build_agent_runner", lambda _: runner)
+
+    with TestClient(app) as client:
+        response = client.post("/api/agent/run")
+
+    assert response.status_code == 200
+    assert response.json()["execution_mode"] == "strands_bedrock"
+    assert response.json()["summary"]["actions_taken"] == 3
+    assert len(runner.model.tool_specs_history) == 10
+
+
+def test_api_reports_incomplete_strands_run_without_fallback(monkeypatch):
+    runner = strands_runner(
+        tool_call("1", "get_active_candidates"),
+        tool_call(
+            "2",
+            "send_feedback_reminder",
+            {"candidate_id": "cand_sarah", "interviewer_id": "int_alex"},
+        ),
+        final_response(),
+    )
+    monkeypatch.setattr("api.main.build_agent_runner", lambda _: runner)
+
+    with TestClient(app) as client:
+        response = client.post("/api/agent/run")
+        actions = client.get("/api/actions").json()
+
+    assert response.status_code == 502
+    assert "rolled back" in response.json()["detail"]
+    assert actions == []
 
 
 def test_strands_schedules_only_after_advance_through_human_api():
@@ -215,12 +326,22 @@ def test_strands_schedules_only_after_advance_through_human_api():
 
         runner = strands_runner(
             tool_call("1", "get_active_candidates"),
-            tool_call("2", "get_interviewer_availability", {"candidate_id": "cand_emily"}),
+            tool_call("2", "get_interview_feedback", {"candidate_id": "cand_sarah"}),
             tool_call(
                 "3",
+                "send_feedback_reminder",
+                {"candidate_id": "cand_sarah", "interviewer_id": "int_alex"},
+            ),
+            tool_call("4", "get_candidate", {"candidate_id": "cand_david"}),
+            tool_call("5", "send_candidate_status_update", {"candidate_id": "cand_david"}),
+            tool_call("6", "get_interviewer_availability", {"candidate_id": "cand_emily"}),
+            tool_call(
+                "7",
                 "schedule_interview",
                 {"candidate_id": "cand_emily", "slot_id": "slot_panel_01"},
             ),
+            tool_call("8", "get_candidate", {"candidate_id": "cand_marcus"}),
+            tool_call("9", "record_no_action", {"candidate_id": "cand_marcus"}),
             final_response(),
         )
         result = runner.run()

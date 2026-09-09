@@ -1,12 +1,32 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from candidateloop.config import DEMO_NOW, AgentConfigurationError, AgentSettings
+from candidateloop.config import (
+    DEMO_NOW,
+    AgentConfigurationError,
+    AgentExecutionError,
+    AgentSettings,
+)
 from candidateloop.models import ResolveDecisionRequest, Stage
 from candidateloop.repository import repository
 from candidateloop.runner import build_agent_runner
+
+DEFAULT_CORS_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")
+
+
+def cors_origins_from_env() -> list[str]:
+    """Return exact allowed origins; an explicitly empty value disables CORS."""
+    configured = os.getenv("CORS_ORIGINS")
+    if configured is None:
+        return list(DEFAULT_CORS_ORIGINS)
+    origins = list(dict.fromkeys(origin.strip().rstrip("/") for origin in configured.split(",")))
+    origins = [origin for origin in origins if origin]
+    if any("*" in origin for origin in origins):
+        raise AgentConfigurationError("CORS_ORIGINS must contain exact origins, not '*'")
+    return origins
 
 
 @asynccontextmanager
@@ -25,7 +45,7 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=cors_origins_from_env(),
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
@@ -70,6 +90,8 @@ def run_agent():
         return build_agent_runner(repository).run()
     except AgentConfigurationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+    except AgentExecutionError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
 
 @app.post("/api/decisions/{decision_id}/resolve")

@@ -46,6 +46,8 @@ class ScriptedModel(Model):
     def __init__(self, responses: Sequence[dict[str, Any]]) -> None:
         self.responses = list(responses)
         self.index = 0
+        self.tool_specs_history: list[list[dict[str, Any]]] = []
+        self.system_prompts: list[str | None] = []
 
     def get_config(self) -> dict[str, str]:
         return {"model_id": "scripted-test-model"}
@@ -70,6 +72,8 @@ class ScriptedModel(Model):
         system_prompt=None,
         **kwargs: Any,
     ) -> AsyncGenerator[dict[str, Any], None]:
+        self.tool_specs_history.append(list(tool_specs or []))
+        self.system_prompts.append(system_prompt)
         response = self.responses[self.index]
         self.index += 1
         for event in self._events(response):

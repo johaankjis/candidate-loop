@@ -17,6 +17,10 @@ class AgentConfigurationError(ValueError):
     """Raised when the requested agent runtime cannot be configured safely."""
 
 
+class AgentExecutionError(RuntimeError):
+    """Raised when a configured model-driven run does not complete safely."""
+
+
 @dataclass(frozen=True)
 class AgentSettings:
     """Runtime settings loaded from environment variables for each request."""

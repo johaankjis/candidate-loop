@@ -50,3 +50,46 @@ This file records handoffs between Claude Code, Codex, Antigravity, and the huma
 ### Important assumptions
 
 - AWS credentials, Bedrock model selection, AgentCore packaging, and deployment are intentionally deferred per human instruction.
+
+## 2026-09-09 — CODEX — CL-004/CL-012/CL-013 Round 2
+
+### Completed
+
+- Required every Strands pass to enumerate and handle all active candidates; incomplete or failed
+  passes now roll back partial state and return an error without changing execution mode.
+- Verified the actual Strands tool schemas expose only the nine allowlisted coordination tools and
+  no Advance, Hold, Reject, hire, rank, score, or decision-resolution capability.
+- Added full behavioral/API coverage and restored exact-origin production CORS from
+  `CORS_ORIGINS` with GET/POST and Content-Type restrictions.
+- Added a fail-closed one-invocation Bedrock smoke script and exact environment documentation.
+
+### Files changed
+
+- Agent runtime, repository transaction support, API CORS/error handling, tests, and live smoke
+  script under `apps/agent/`.
+- Runtime documentation in `.env.example`, `README.md`, and `docs/deployment.md`.
+- `TASKS.md` and Round 2 handoff records.
+
+### Tests run
+
+- Backend Ruff format/check, 33 pytest tests, `pip check`, compileall, wheel/package-content check.
+- `./scripts/smoke_test.sh` including live local API startup plus frontend lint/build.
+- Full deterministic API path over HTTP: reset, run, human Advance, schedule, duplicate-safe rerun.
+- Credential-pattern scan and `git diff --check`.
+
+### Known issues
+
+- Live Bedrock was not invoked: no AWS CLI, boto3-compatible credentials/profile, region, or model
+  ID is available in this environment. Run the documented `apps/agent/scripts/bedrock_smoke.py`
+  command once account/model access is supplied.
+- Tests emit one upstream Starlette/AnyIO deprecation warning under Python 3.14.
+
+### Recommended next step
+
+- Integrate this runtime branch first, then frontend-only Round 2 work, and run deployment/QA work
+  last so it validates the final combined tree. Do not merge this branch automatically.
+
+### Important assumptions
+
+- `deterministic_local` remains the intentional local/test/demo default; production Strands mode
+  must fail visibly rather than substitute deterministic behavior.

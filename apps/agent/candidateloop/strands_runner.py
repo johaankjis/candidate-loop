@@ -2,7 +2,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from candidateloop.config import DEMO_NOW, AgentConfigurationError, AgentSettings
+from candidateloop.config import (
+    DEMO_NOW,
+    AgentConfigurationError,
+    AgentExecutionError,
+    AgentSettings,
+)
 from candidateloop.models import AgentRunResult
 from candidateloop.repository import InMemoryRepository
 from candidateloop.strands_tools import StrandsRecruitingToolAdapter
@@ -53,8 +58,20 @@ class StrandsAgentRunner:
     def run(self) -> AgentRunResult:
         run_id = f"run_{uuid4().hex}"
         adapter = StrandsRecruitingToolAdapter(self.repository, run_id, DEMO_NOW)
-        agent = self.build_agent(adapter)
-        agent(RUN_INSTRUCTION, limits={"turns": MAX_AGENT_TURNS})
+        snapshot = self.repository.snapshot()
+        try:
+            agent = self.build_agent(adapter)
+            agent(RUN_INSTRUCTION, limits={"turns": MAX_AGENT_TURNS})
+            adapter.assert_complete()
+        except AgentConfigurationError:
+            self.repository.restore(snapshot)
+            raise
+        except Exception as error:
+            self.repository.restore(snapshot)
+            raise AgentExecutionError(
+                "Strands execution did not complete a safe operational pass; "
+                "all run changes were rolled back."
+            ) from error
         return AgentRunResult(
             run_id=run_id,
             execution_mode=self.settings.reported_execution_mode,
