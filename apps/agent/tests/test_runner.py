@@ -84,7 +84,12 @@ def test_write_tools_enforce_policy_when_called_out_of_order():
 
 def test_tool_surface_has_no_hiring_disposition_method():
     exposed = set(dir(RecruitingTools))
-    assert "advance_candidate" not in exposed
-    assert "reject_candidate" not in exposed
-    assert "hire_candidate" not in exposed
-    assert "rank_candidates" not in exposed
+    assert {
+        "advance_candidate",
+        "hold_candidate",
+        "reject_candidate",
+        "hire_candidate",
+        "rank_candidates",
+        "score_candidate",
+        "resolve_decision",
+    }.isdisjoint(exposed)

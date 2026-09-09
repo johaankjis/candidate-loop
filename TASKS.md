@@ -5,7 +5,7 @@
 - [x] CL-001 Bootstrap repository and local dev commands
 - [x] CL-002 Define models, repository, and deterministic demo seed
 - [x] CL-003 Implement safe recruiting operation tools
-- [ ] CL-004 Build CandidateLoop with Strands Agents SDK
+- [x] CL-004 Build CandidateLoop with Strands Agents SDK
 - [x] CL-005 Add local agent run API and structured activity events
 - [x] CL-006 Build frontend operations cockpit
 - [x] CL-007 Add activity feed
@@ -13,8 +13,8 @@
 - [x] CL-009 Connect frontend to live local run
 - [x] CL-010 Add deterministic demo reset
 - [x] CL-011 Add duplicate-action/idempotency rules
-- [ ] CL-012 Complete MVP automated tests
-- [ ] CL-013 Verify full demo path end-to-end
+- [x] CL-012 Complete MVP automated tests
+- [x] CL-013 Verify full demo path end-to-end
 
 ## P1 — Submission
 
@@ -34,4 +34,3 @@
 - [ ] CL-024 Add additional edge-case candidate
 - [ ] CL-025 Add action filters/history
 - [ ] CL-026 Add polished demo-mode transitions
-

@@ -5,6 +5,7 @@ from uuid import uuid4
 from candidateloop.config import DEMO_NOW
 from candidateloop.models import AgentAction, RunSummary, Stage
 from candidateloop.policies import (
+    can_send_feedback_reminder,
     candidate_needs_status_update,
     is_decision_ready,
     missing_feedback,
@@ -27,7 +28,7 @@ STRANDS_TOOL_NAMES = frozenset(
 )
 
 FORBIDDEN_AGENT_TOOL_TERMS = frozenset(
-    {"advance", "reject", "hire", "rank", "score", "resolve_decision"}
+    {"advance", "hold", "reject", "hire", "rank", "score", "resolve_decision"}
 )
 
 
@@ -45,6 +46,45 @@ class StrandsRecruitingToolAdapter:
         self.now = now
         self.operations = RecruitingTools(repository, now)
         self.summary = RunSummary()
+        self.active_candidate_ids: set[str] | None = None
+        self.handled_candidate_ids: set[str] = set()
+
+    def assert_complete(self) -> None:
+        """Require the model-driven pass to account for every active candidate."""
+        if self.active_candidate_ids is None:
+            raise RuntimeError("Strands run did not call get_active_candidates")
+        missing = self.active_candidate_ids - self.handled_candidate_ids
+        if missing:
+            missing_ids = ", ".join(sorted(missing))
+            raise RuntimeError(f"Strands run did not handle active candidates: {missing_ids}")
+        pending_work: set[str] = set()
+        for candidate_id in self.active_candidate_ids:
+            candidate = self._candidate(candidate_id)
+            feedback = self.operations.get_interview_feedback(candidate_id)
+            communications = self.repository.communications_for(candidate_id)
+            if any(
+                can_send_feedback_reminder(
+                    candidate_id, item.interviewer_id, communications, self.now
+                )
+                for item in missing_feedback(candidate, feedback, self.now)
+            ):
+                pending_work.add(candidate_id)
+            if candidate.stage == Stage.RECRUITER_REVIEW and candidate_needs_status_update(
+                candidate, self.now
+            ):
+                pending_work.add(candidate_id)
+            if is_decision_ready(candidate, feedback) and not self.repository.open_decision_for(
+                candidate_id
+            ):
+                pending_work.add(candidate_id)
+            if (
+                candidate.stage == Stage.PANEL_SCHEDULING
+                and self.operations.get_interviewer_availability(candidate_id)
+            ):
+                pending_work.add(candidate_id)
+        if pending_work:
+            pending_ids = ", ".join(sorted(pending_work))
+            raise RuntimeError(f"Strands run left safe operational work pending: {pending_ids}")
 
     def build(self) -> list[Any]:
         """Create stateful Strands function tools bound to this single run."""
@@ -55,6 +95,7 @@ class StrandsRecruitingToolAdapter:
             """List every active synthetic candidate workflow that must be processed."""
             candidates = self.operations.get_active_candidates()
             self.summary.candidates_scanned = len(candidates)
+            self.active_candidate_ids = {candidate.id for candidate in candidates}
             return [candidate.model_dump(mode="json") for candidate in candidates]
 
         @tool
@@ -309,6 +350,7 @@ class StrandsRecruitingToolAdapter:
         action: str,
         result: str,
     ) -> None:
+        self.handled_candidate_ids.add(candidate_id)
         self.operations.record_action(
             AgentAction(
                 id=f"action_{uuid4().hex}",
