@@ -63,6 +63,25 @@ def test_scheduling_tool_rejects_candidate_without_human_advance():
         raise AssertionError("Scheduling should require a human advance decision")
 
 
+def test_write_tools_enforce_policy_when_called_out_of_order():
+    tools = RecruitingTools(repository)
+
+    assert tools.send_candidate_status_update("cand_marcus") is None
+    try:
+        tools.send_feedback_reminder("cand_marcus", "int_alex")
+    except ValueError as error:
+        assert "overdue pending feedback" in str(error)
+    else:
+        raise AssertionError("Reminder should require overdue pending feedback")
+
+    try:
+        tools.create_human_decision("cand_marcus", "Unsafe", "Unsafe")
+    except ValueError as error:
+        assert "complete interview feedback" in str(error)
+    else:
+        raise AssertionError("Decision escalation should require completed feedback")
+
+
 def test_tool_surface_has_no_hiring_disposition_method():
     exposed = set(dir(RecruitingTools))
     assert "advance_candidate" not in exposed

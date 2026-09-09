@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from candidateloop.config import DEMO_NOW
+from candidateloop.config import DEMO_NOW, AgentSettings
 from candidateloop.models import AgentAction, AgentRunResult, RunSummary, Stage
 from candidateloop.policies import (
     candidate_needs_status_update,
@@ -13,7 +13,7 @@ from candidateloop.tools import RecruitingTools
 
 
 class DeterministicAgentRunner:
-    """Local policy runner used until a Strands model provider is configured.
+    """Deterministic local/test/demo fallback for the operational workflow.
 
     It executes the same narrow tools and records the same evidence-backed events the
     Strands runtime will consume. The API labels this mode explicitly to avoid claiming
@@ -194,3 +194,14 @@ class DeterministicAgentRunner:
                 created_at=self.now,
             )
         )
+
+
+def build_agent_runner(repository: InMemoryRepository, settings: AgentSettings | None = None):
+    """Select the explicitly configured runner without silently changing execution mode."""
+    resolved = settings or AgentSettings.from_env()
+    if resolved.execution_mode == "deterministic_local":
+        return DeterministicAgentRunner(repository)
+
+    from candidateloop.strands_runner import StrandsAgentRunner
+
+    return StrandsAgentRunner(repository, settings=resolved)

@@ -3,10 +3,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from candidateloop.config import DEMO_NOW
+from candidateloop.config import DEMO_NOW, AgentConfigurationError, AgentSettings
 from candidateloop.models import ResolveDecisionRequest, Stage
 from candidateloop.repository import repository
-from candidateloop.runner import DeterministicAgentRunner
+from candidateloop.runner import build_agent_runner
 
 
 @asynccontextmanager
@@ -34,7 +34,11 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "execution_mode": "deterministic_local"}
+    try:
+        execution_mode = AgentSettings.from_env().reported_execution_mode
+    except AgentConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return {"status": "ok", "execution_mode": execution_mode}
 
 
 @app.get("/api/candidates")
@@ -62,7 +66,10 @@ def list_decisions():
 
 @app.post("/api/agent/run")
 def run_agent():
-    return DeterministicAgentRunner(repository).run()
+    try:
+        return build_agent_runner(repository).run()
+    except AgentConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @app.post("/api/decisions/{decision_id}/resolve")
