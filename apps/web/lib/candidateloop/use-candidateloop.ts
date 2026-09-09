@@ -14,6 +14,32 @@ import type {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
+/**
+ * Raised when the request never reached the API at all. `fetch` only rejects on
+ * a transport failure, so this is the "backend is not running" case and needs
+ * different copy from an API that answered with an error status.
+ */
+class ApiUnavailableError extends Error {
+  constructor() {
+    super(`Cannot reach the CandidateLoop API at ${API_URL}. Start the backend, then try again.`);
+    this.name = 'ApiUnavailableError';
+  }
+}
+
+async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${API_URL}${path}`, init);
+  } catch {
+    throw new ApiUnavailableError();
+  }
+}
+
+/** Keeps the HTTP status visible so a 4xx/5xx is not mistaken for an outage. */
+function requireOk(response: Response, message: string): Response {
+  if (!response.ok) throw new Error(`${message} (HTTP ${response.status})`);
+  return response;
+}
+
 /** Replay pacing for actions the run actually returned. Kept short for a live demo. */
 const REVEAL_BASE_MS = 120;
 const REVEAL_STEP_MS = 170;
@@ -49,6 +75,8 @@ export function useCandidateLoop() {
   const [busy, setBusy] = useState<Busy>(null);
   const [phase, setPhase] = useState<RunPhase>('idle');
   const [statusMessage, setStatusMessage] = useState('Ready to scan candidate workflows.');
+  /** Which control last failed, so the console can name it instead of always saying "run". */
+  const [failedAction, setFailedAction] = useState<Busy>(null);
   /** Action id → position in the newest run, used only for staggered reveal. */
   const [revealOrder, setRevealOrder] = useState<Record<string, number>>({});
 
@@ -65,12 +93,12 @@ export function useCandidateLoop() {
 
   const refresh = useCallback(async (): Promise<Snapshot> => {
     const [candidateResponse, actionResponse, decisionResponse] = await Promise.all([
-      fetch(`${API_URL}/api/candidates`),
-      fetch(`${API_URL}/api/actions`),
-      fetch(`${API_URL}/api/decisions`),
+      apiFetch('/api/candidates'),
+      apiFetch('/api/actions'),
+      apiFetch('/api/decisions'),
     ]);
-    if (!candidateResponse.ok || !actionResponse.ok || !decisionResponse.ok) {
-      throw new Error('CandidateLoop API is unavailable.');
+    for (const response of [candidateResponse, actionResponse, decisionResponse]) {
+      requireOk(response, 'CandidateLoop state could not be loaded.');
     }
     const snapshot: Snapshot = {
       candidates: (await candidateResponse.json()) as Candidate[],
@@ -88,7 +116,7 @@ export function useCandidateLoop() {
     let cancelled = false;
     async function connect() {
       try {
-        const health = await fetch(`${API_URL}/health`);
+        const health = await apiFetch('/health');
         if (health.ok) {
           const body = (await health.json()) as { execution_mode?: string };
           if (!cancelled && body.execution_mode) setExecutionMode(body.execution_mode);
@@ -105,6 +133,18 @@ export function useCandidateLoop() {
       cancelled = true;
     };
   }, [refresh]);
+
+  /**
+   * One place that decides what a failed control says. An unreachable API also
+   * clears `connected`, so the header stops claiming a live backend.
+   */
+  const reportFailure = useCallback((action: Exclude<Busy, null>, error: unknown) => {
+    if (error instanceof ApiUnavailableError) setConnected(false);
+    setFailedAction(action);
+    setStatusMessage(
+      error instanceof Error ? error.message : 'The request failed. Please try again.',
+    );
+  }, []);
 
   const pendingDecisions = useMemo(
     () => decisions.filter((decision) => decision.status === 'pending'),
@@ -152,10 +192,11 @@ export function useCandidateLoop() {
     setBusy('run');
     setPhase('scanning');
     setRevealOrder({});
+    setFailedAction(null);
     setStatusMessage('Scanning active candidate workflows…');
     try {
-      const response = await fetch(`${API_URL}/api/agent/run`, { method: 'POST' });
-      if (!response.ok) throw new Error('The agent run could not be started.');
+      const response = await apiFetch('/api/agent/run', { method: 'POST' });
+      requireOk(response, 'The agent run could not be started.');
       const result = (await response.json()) as RunResult;
       setSummary(result.summary);
       setExecutionMode(result.execution_mode);
@@ -177,20 +218,19 @@ export function useCandidateLoop() {
     } catch (error) {
       clearRevealTimer();
       setPhase('failed');
-      const message =
-        error instanceof Error ? error.message : 'The agent run failed.';
-      setStatusMessage(message);
+      reportFailure('run', error);
       throw error;
     } finally {
       setBusy(null);
     }
-  }, [clearRevealTimer, refresh, stageReveal]);
+  }, [clearRevealTimer, refresh, reportFailure, stageReveal]);
 
   const resetDemo = useCallback(async () => {
     setBusy('reset');
+    setFailedAction(null);
     try {
-      const response = await fetch(`${API_URL}/api/demo/reset`, { method: 'POST' });
-      if (!response.ok) throw new Error('Demo state could not be reset.');
+      const response = await apiFetch('/api/demo/reset', { method: 'POST' });
+      requireOk(response, 'Demo state could not be reset.');
       clearRevealTimer();
       setSummary(null);
       setRevealOrder({});
@@ -200,39 +240,39 @@ export function useCandidateLoop() {
       setStatusMessage('Demo restored to the four-candidate starting state.');
     } catch (error) {
       setPhase('failed');
-      setStatusMessage(
-        error instanceof Error ? error.message : 'Demo reset failed.',
-      );
+      reportFailure('reset', error);
       throw error;
     } finally {
       setBusy(null);
     }
-  }, [clearRevealTimer, refresh]);
+  }, [clearRevealTimer, refresh, reportFailure]);
 
   const resolveDecision = useCallback(
     async (decisionId: string, resolution: DecisionResolution) => {
       setBusy('decision');
+      setFailedAction(null);
       try {
-        const response = await fetch(`${API_URL}/api/decisions/${decisionId}/resolve`, {
+        const response = await apiFetch(`/api/decisions/${decisionId}/resolve`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ resolution }),
         });
-        if (!response.ok) throw new Error('The decision could not be recorded.');
+        requireOk(response, 'The decision could not be recorded.');
         await refresh();
+        // Clear a previous failure banner; a run result stays as it was.
+        setPhase((current) => (current === 'failed' ? 'idle' : current));
         setStatusMessage(
           `${resolution} recorded by a recruiter. CandidateLoop will pick up the coordination.`,
         );
       } catch (error) {
-        setStatusMessage(
-          error instanceof Error ? error.message : 'Decision update failed.',
-        );
+        setPhase('failed');
+        reportFailure('decision', error);
         throw error;
       } finally {
         setBusy(null);
       }
     },
-    [refresh],
+    [refresh, reportFailure],
   );
 
   // Same three visible actions the cockpit exposes, offered to a WebMCP host.
@@ -326,6 +366,7 @@ export function useCandidateLoop() {
     setSelectedId,
     busy,
     phase,
+    failedAction,
     statusMessage,
     revealOrder,
     runAgent,

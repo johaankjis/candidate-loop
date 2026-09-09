@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import type { Busy } from '@/lib/candidateloop/use-candidateloop';
 import type { RunPhase, RunSummary } from '@/lib/candidateloop/types';
 
 type PhasePresentation = {
@@ -61,6 +62,16 @@ const PHASES: Record<RunPhase, PhasePresentation> = {
   },
 };
 
+/**
+ * Reset and decision failures used to surface as "Run failed", which named the
+ * wrong control. Each retryable control gets its own wording instead.
+ */
+const FAILURE: Record<Exclude<Busy, null>, { label: string; retry: string }> = {
+  run: { label: 'Run failed', retry: 'Retry run' },
+  reset: { label: 'Reset failed', retry: 'Retry reset' },
+  decision: { label: 'Decision not recorded', retry: '' },
+};
+
 type Metric = {
   key: keyof RunSummary;
   label: string;
@@ -87,18 +98,21 @@ const METRICS: Metric[] = [
 export function RunConsole({
   phase,
   summary,
+  failedAction,
   statusMessage,
   onRetry,
   retryDisabled,
 }: {
   phase: RunPhase;
   summary: RunSummary | null;
+  failedAction: Busy;
   statusMessage: string;
-  onRetry: () => void;
+  onRetry: (action: Exclude<Busy, null>) => void;
   retryDisabled: boolean;
 }) {
   const presentation = PHASES[phase];
   const Icon = presentation.icon;
+  const failure = phase === 'failed' && failedAction ? FAILURE[failedAction] : null;
 
   return (
     <section
@@ -113,7 +127,7 @@ export function RunConsole({
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <p className="text-sm font-semibold">{presentation.label}</p>
+            <p className="text-sm font-semibold">{failure?.label ?? presentation.label}</p>
             {summary && phase !== 'failed' && (
               <span className="text-xs text-muted-foreground">
                 · {summary.candidates_scanned} workflows inspected
@@ -133,9 +147,14 @@ export function RunConsole({
             {statusMessage}
           </p>
         </div>
-        {phase === 'failed' && (
-          <Button variant="outline" size="sm" onClick={onRetry} disabled={retryDisabled}>
-            Retry run
+        {failure?.retry && failedAction && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onRetry(failedAction)}
+            disabled={retryDisabled}
+          >
+            {failure.retry}
           </Button>
         )}
       </div>
