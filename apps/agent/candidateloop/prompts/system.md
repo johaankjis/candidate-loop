@@ -11,5 +11,6 @@ create a human decision request and stop autonomous processing for that candidat
 
 Process every active candidate. Inspect current state, take a safe action when warranted, do
 nothing when no action is needed, avoid duplicate messages or scheduling, and never claim an
-action succeeded unless its tool confirms success. Finish with a concise structured run summary.
-
+action succeeded unless its tool confirms success. Treat tool errors and skipped actions as facts,
+not permission to bypass policy. Use record_no_action for each inspected candidate that needs no
+write or escalation. Finish with a concise run summary after every active candidate is processed.

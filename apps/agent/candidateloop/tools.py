@@ -3,7 +3,13 @@ from uuid import uuid4
 
 from candidateloop.config import DEMO_NOW
 from candidateloop.models import AgentAction, Communication, HumanDecision, Stage
-from candidateloop.policies import can_schedule, can_send_feedback_reminder
+from candidateloop.policies import (
+    can_schedule,
+    can_send_feedback_reminder,
+    candidate_needs_status_update,
+    is_decision_ready,
+    missing_feedback,
+)
 from candidateloop.repository import InMemoryRepository
 
 SAFE_CANDIDATE_STATUS_BODY = (
@@ -37,6 +43,12 @@ class RecruitingTools:
     def send_feedback_reminder(
         self, candidate_id: str, interviewer_id: str
     ) -> Communication | None:
+        candidate = self.repository.candidate(candidate_id)
+        if candidate is None:
+            raise ValueError("Unknown candidate")
+        pending = missing_feedback(candidate, self.repository.feedback_for(candidate_id), self.now)
+        if interviewer_id not in {item.interviewer_id for item in pending}:
+            raise ValueError("Feedback reminder requires overdue pending feedback")
         communications = self.repository.communications_for(candidate_id)
         if not can_send_feedback_reminder(candidate_id, interviewer_id, communications, self.now):
             return None
@@ -59,10 +71,14 @@ class RecruitingTools:
         self.repository.save_communication(communication)
         return communication
 
-    def send_candidate_status_update(self, candidate_id: str) -> Communication:
+    def send_candidate_status_update(self, candidate_id: str) -> Communication | None:
         candidate = self.repository.candidate(candidate_id)
         if candidate is None:
             raise ValueError("Unknown candidate")
+        if candidate.stage != Stage.RECRUITER_REVIEW or not candidate_needs_status_update(
+            candidate, self.now
+        ):
+            return None
         communication = Communication(
             id=f"comm_{uuid4().hex}",
             candidate_id=candidate_id,
@@ -85,6 +101,8 @@ class RecruitingTools:
         candidate = self.repository.candidate(candidate_id)
         if candidate is None:
             raise ValueError("Unknown candidate")
+        if not is_decision_ready(candidate, self.repository.feedback_for(candidate_id)):
+            raise ValueError("Human decision escalation requires complete interview feedback")
         decision = HumanDecision(
             id=f"decision_{uuid4().hex}",
             candidate_id=candidate_id,
