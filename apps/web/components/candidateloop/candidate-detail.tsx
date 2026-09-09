@@ -155,9 +155,13 @@ export function CandidateDetail({ candidate }: { candidate: Candidate | undefine
           label="Upcoming interview"
           value={candidate.next_interview_at ? formatDayTime(candidate.next_interview_at) : 'None'}
           detail={
-            candidate.next_interview_at
-              ? 'Scheduled by CandidateLoop after a human advance'
-              : 'Nothing is currently on the calendar'
+            // Only claim the agent booked this when a recruiter advance actually
+            // unlocked scheduling. Seeded interviews are not the agent's work.
+            !candidate.next_interview_at
+              ? 'Nothing is currently on the calendar'
+              : candidate.last_human_resolution === 'ADVANCE'
+                ? 'Scheduled by CandidateLoop after the recruiter advance'
+                : 'Already on the calendar'
           }
         />
         <Stat

@@ -9,6 +9,7 @@ import { RunConsole } from '@/components/candidateloop/run-console';
 import { Button } from '@/components/ui/button';
 import { useCandidateLoop } from '@/lib/candidateloop/use-candidateloop';
 import type { DecisionResolution } from '@/lib/candidateloop/types';
+import type { Busy } from '@/lib/candidateloop/use-candidateloop';
 
 /** The hook surfaces every failure as status text, so the handlers only stop propagation. */
 function swallow() {
@@ -28,6 +29,12 @@ export default function Home() {
 
   function handleResolve(id: string, resolution: DecisionResolution) {
     loop.resolveDecision(id, resolution).catch(swallow);
+  }
+
+  /** Retry the control that actually failed, not always the run. */
+  function handleRetry(action: Exclude<Busy, null>) {
+    if (action === 'reset') handleReset();
+    else if (action === 'run') handleRun();
   }
 
   const running = loop.busy === 'run';
@@ -54,18 +61,23 @@ export default function Home() {
             {loop.pendingDecisions.length > 0 && (
               <span className="hidden items-center gap-1.5 rounded-full border border-violet-300 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800 sm:flex">
                 <ShieldAlert className="size-3.5" aria-hidden="true" />
-                {loop.pendingDecisions.length} decision
-                {loop.pendingDecisions.length === 1 ? '' : 's'} need you
+                {loop.pendingDecisions.length === 1
+                  ? '1 decision needs you'
+                  : `${loop.pendingDecisions.length} decisions need you`}
               </span>
             )}
 
             {/* Truthful execution-mode label straight from the API. */}
             <span
-              className="hidden items-center gap-1.5 rounded-full border border-border bg-secondary px-2.5 py-1 text-xs text-muted-foreground md:flex"
+              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
+                loop.connected
+                  ? 'border-border bg-secondary text-muted-foreground'
+                  : 'border-amber-300 bg-amber-50 font-medium text-amber-800'
+              }`}
               title={
                 loop.connected
-                  ? 'Connected to the local CandidateLoop API'
-                  : 'API unavailable — showing preview data'
+                  ? 'Connected to the CandidateLoop API'
+                  : 'API unavailable — showing preview data, not live state'
               }
             >
               {loop.connected ? (
@@ -105,8 +117,9 @@ export default function Home() {
         <RunConsole
           phase={loop.phase}
           summary={loop.summary}
+          failedAction={loop.failedAction}
           statusMessage={loop.statusMessage}
-          onRetry={handleRun}
+          onRetry={handleRetry}
           retryDisabled={loop.busy !== null}
         />
 

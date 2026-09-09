@@ -146,7 +146,12 @@ export function ActivityFeed({
     [actions, filter],
   );
 
-  // Actions arrive newest-first, so consecutive ids group cleanly into runs.
+  /**
+   * Actions arrive newest-first, so consecutive ids group cleanly into runs.
+   * Within a run the API also returns reverse order and every event shares one
+   * timestamp, so each group is flipped back into the order the agent actually
+   * scanned candidates. Newest run still sorts first.
+   */
   const groups = useMemo(() => {
     const out: { runId: string; items: AgentAction[] }[] = [];
     for (const item of visible) {
@@ -154,7 +159,7 @@ export function ActivityFeed({
       if (current && current.runId === item.run_id) current.items.push(item);
       else out.push({ runId: item.run_id, items: [item] });
     }
-    return out;
+    return out.map((group) => ({ ...group, items: [...group.items].reverse() }));
   }, [visible]);
 
   return (
@@ -219,8 +224,14 @@ export function ActivityFeed({
                   <span className="h-px flex-1 bg-border" aria-hidden="true" />
                 </div>
                 <div className="space-y-2.5">
-                  {group.items.map((item) => (
-                    <ActionCard key={item.id} item={item} revealIndex={revealOrder[item.id]} />
+                  {group.items.map((item, index) => (
+                    <ActionCard
+                      key={item.id}
+                      item={item}
+                      // revealOrder only marks membership in the newest run; the
+                      // stagger follows display order so it plays top to bottom.
+                      revealIndex={revealOrder[item.id] === undefined ? undefined : index}
+                    />
                   ))}
                 </div>
               </section>
