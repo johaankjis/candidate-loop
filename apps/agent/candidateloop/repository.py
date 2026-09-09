@@ -1,4 +1,5 @@
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime
 from threading import RLock
 
@@ -18,6 +19,19 @@ from candidateloop.models import (
 from candidateloop.seed import demo_availability, demo_candidates, demo_feedback, demo_interviewers
 
 
+@dataclass(frozen=True)
+class RepositorySnapshot:
+    """Deep-copied repository state used to make model-driven runs atomic."""
+
+    candidates: dict[str, Candidate]
+    interviewers: dict[str, Interviewer]
+    feedback: dict[str, Feedback]
+    availability: dict[str, AvailabilitySlot]
+    communications: dict[str, Communication]
+    decisions: dict[str, HumanDecision]
+    actions: dict[str, AgentAction]
+
+
 class InMemoryRepository:
     """Thread-safe, resettable storage for the deterministic hackathon demo."""
 
@@ -34,6 +48,30 @@ class InMemoryRepository:
             self.communications: dict[str, Communication] = {}
             self.decisions: dict[str, HumanDecision] = {}
             self.actions: dict[str, AgentAction] = {}
+
+    def snapshot(self) -> RepositorySnapshot:
+        """Capture state before a model-driven run begins."""
+        with self._lock:
+            return RepositorySnapshot(
+                candidates=deepcopy(self.candidates),
+                interviewers=deepcopy(self.interviewers),
+                feedback=deepcopy(self.feedback),
+                availability=deepcopy(self.availability),
+                communications=deepcopy(self.communications),
+                decisions=deepcopy(self.decisions),
+                actions=deepcopy(self.actions),
+            )
+
+    def restore(self, snapshot: RepositorySnapshot) -> None:
+        """Restore a prior snapshot after an incomplete or failed run."""
+        with self._lock:
+            self.candidates = deepcopy(snapshot.candidates)
+            self.interviewers = deepcopy(snapshot.interviewers)
+            self.feedback = deepcopy(snapshot.feedback)
+            self.availability = deepcopy(snapshot.availability)
+            self.communications = deepcopy(snapshot.communications)
+            self.decisions = deepcopy(snapshot.decisions)
+            self.actions = deepcopy(snapshot.actions)
 
     def active_candidates(self) -> list[Candidate]:
         with self._lock:
