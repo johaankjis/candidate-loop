@@ -40,6 +40,65 @@ function requireOk(response: Response, message: string): Response {
   return response;
 }
 
+/**
+ * Tools whose events represent a completed operational write, mapped to the
+ * counter the backend increments for them. `record_agent_note` is absent on
+ * purpose: it records a deliberate skip, never a write.
+ */
+const WRITE_TOOL_COUNTERS: Partial<Record<string, keyof RunSummary>> = {
+  send_feedback_reminder: 'reminders_sent',
+  send_candidate_status_update: 'candidate_updates_sent',
+  create_human_decision: 'human_decisions_created',
+  schedule_interview: 'interviews_scheduled',
+};
+
+/**
+ * Rebuilds the newest run's counters from the persisted action feed, so a page
+ * reload does not present a finished demo as an untouched Idle console.
+ *
+ * Counts only what the events themselves state — every candidate scanned in a
+ * run gets exactly one event, so the run is fully described by its own records.
+ * No text is interpreted, no record is synthesised, and no hiring outcome is
+ * inferred. Returns null when nothing has run yet.
+ */
+function summariseNewestRun(actions: AgentAction[]): RunSummary | null {
+  const newest = actions[0];
+  if (!newest) return null;
+  const run = actions.filter((action) => action.run_id === newest.run_id);
+
+  const summary: RunSummary = {
+    candidates_scanned: new Set(run.map((action) => action.candidate_id)).size,
+    actions_taken: 0,
+    reminders_sent: 0,
+    candidate_updates_sent: 0,
+    human_decisions_created: 0,
+    interviews_scheduled: 0,
+    no_action_needed: 0,
+  };
+
+  for (const action of run) {
+    if (action.event_type === 'no_action') {
+      summary.no_action_needed += 1;
+      continue;
+    }
+    summary.actions_taken += 1;
+    // Guarded by event_type so a skipped write can never be counted as a sent
+    // one, whatever tool the event names.
+    const counter = WRITE_TOOL_COUNTERS[action.tool];
+    if (counter) summary[counter] += 1;
+  }
+  return summary;
+}
+
+/** One wording for a settled run, shared by the live run and by rehydration. */
+function describeRun(summary: RunSummary) {
+  return summary.actions_taken === 0
+    ? 'No action required — every workflow is already up to date.'
+    : `${summary.actions_taken} routine action${
+        summary.actions_taken === 1 ? '' : 's'
+      } handled across ${summary.candidates_scanned} candidates.`;
+}
+
 /** Replay pacing for actions the run actually returned. Kept short for a live demo. */
 const REVEAL_BASE_MS = 120;
 const REVEAL_STEP_MS = 170;
@@ -121,7 +180,16 @@ export function useCandidateLoop() {
           const body = (await health.json()) as { execution_mode?: string };
           if (!cancelled && body.execution_mode) setExecutionMode(body.execution_mode);
         }
-        await refresh();
+        const snapshot = await refresh();
+        if (cancelled) return;
+        // A reload keeps the persisted feed but loses the in-memory summary, so
+        // restore the newest run's console state from the events themselves.
+        const restored = summariseNewestRun(snapshot.actions);
+        if (restored) {
+          setSummary(restored);
+          setPhase(restored.actions_taken === 0 ? 'no_work' : 'complete');
+          setStatusMessage(describeRun(restored));
+        }
       } catch {
         if (cancelled) return;
         setConnected(false);
@@ -207,13 +275,7 @@ export function useCandidateLoop() {
       if (pending) setSelectedId(pending.candidate_id);
 
       stageReveal(result);
-      setStatusMessage(
-        result.summary.actions_taken === 0
-          ? 'No action required — every workflow is already up to date.'
-          : `${result.summary.actions_taken} routine action${
-              result.summary.actions_taken === 1 ? '' : 's'
-            } handled across ${result.summary.candidates_scanned} candidates.`,
-      );
+      setStatusMessage(describeRun(result.summary));
       return result;
     } catch (error) {
       clearRevealTimer();
