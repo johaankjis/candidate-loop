@@ -56,4 +56,17 @@ npm install --no-audit --no-fund > /dev/null 2>&1
 npm run lint
 npm run build
 
+echo "==> Verifying Docker build..."
+cd "$ROOT_DIR/apps/agent"
+if command -v docker &> /dev/null; then
+    if docker info &> /dev/null; then
+        docker build -t candidateloop-agent:test . > /dev/null
+        echo "Docker build successful."
+    else
+        echo "Docker daemon not running, skipping build verification."
+    fi
+else
+    echo "Docker not installed, skipping build verification."
+fi
+
 echo "Smoke test passed successfully!"

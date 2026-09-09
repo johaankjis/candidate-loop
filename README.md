@@ -66,5 +66,4 @@ For the exact live Bedrock smoke-test command and required environment variables
 `apps/web` contains the Vinext/React operations cockpit. `apps/agent` contains FastAPI, the domain
 models, deterministic repository, safety policies, narrow recruiting tools, and both deterministic
 and Strands runners. The Strands registry exposes coordination tools only; Advance, Hold, and
-Reject remain exclusive to the human-facing API. AWS credentials and deployment are deliberately
-excluded from the repository.
+Reject remain exclusive to the human-facing API. AWS credentials can be provided via the local environment or an IAM Task Role when deployed.
