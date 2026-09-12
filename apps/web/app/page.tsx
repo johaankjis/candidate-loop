@@ -1,23 +1,41 @@
 'use client';
 
-import { Command, Play, RefreshCw, ShieldAlert, Wifi, WifiOff } from 'lucide-react';
+import { useState } from 'react';
 import { ActivityFeed } from '@/components/candidateloop/activity-feed';
 import { CandidateDetail } from '@/components/candidateloop/candidate-detail';
+import {
+  CandidateEditorDialog,
+  RemoveCandidateDialog,
+} from '@/components/candidateloop/candidate-management';
 import { CandidateRail } from '@/components/candidateloop/candidate-rail';
 import { DecisionQueue } from '@/components/candidateloop/decision-queue';
 import { RunConsole } from '@/components/candidateloop/run-console';
 import { Button } from '@/components/ui/button';
+import { CANDIDATE_MANAGEMENT_STAGES } from '@/lib/candidateloop/format';
 import { useCandidateLoop } from '@/lib/candidateloop/use-candidateloop';
-import type { DecisionResolution } from '@/lib/candidateloop/types';
+import type {
+  Candidate,
+  CandidateInput,
+  CandidateUpdateInput,
+  DecisionResolution,
+} from '@/lib/candidateloop/types';
 import type { Busy } from '@/lib/candidateloop/use-candidateloop';
 
-/** The hook surfaces every failure as status text, so the handlers only stop propagation. */
+/** The hook surfaces every failure as status text, so handlers only stop propagation. */
 function swallow() {
   return undefined;
 }
 
 export default function Home() {
   const loop = useCandidateLoop();
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(
+    null,
+  );
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removingCandidate, setRemovingCandidate] = useState<Candidate | null>(
+    null,
+  );
 
   function handleRun() {
     loop.runAgent().catch(swallow);
@@ -31,120 +49,137 @@ export default function Home() {
     loop.resolveDecision(id, resolution).catch(swallow);
   }
 
-  /** Retry the control that actually failed, not always the run. */
   function handleRetry(action: Exclude<Busy, null>) {
     if (action === 'reset') handleReset();
     else if (action === 'run') handleRun();
   }
 
+  function handleAddCandidate() {
+    setEditingCandidate(null);
+    setEditorOpen(true);
+  }
+
+  function handleEditCandidate(candidate: Candidate) {
+    setEditingCandidate(candidate);
+    setEditorOpen(true);
+  }
+
+  function handleRemoveCandidate(candidate: Candidate) {
+    setRemovingCandidate(candidate);
+    setRemoveOpen(true);
+  }
+
+  function saveCandidate(input: CandidateInput) {
+    if (!editingCandidate) return loop.createCandidate(input);
+    const update: CandidateUpdateInput = { ...input };
+    if (
+      !CANDIDATE_MANAGEMENT_STAGES.includes(
+        editingCandidate.stage as (typeof CANDIDATE_MANAGEMENT_STAGES)[number],
+      )
+    ) {
+      delete update.stage;
+    }
+    return loop.updateCandidate(editingCandidate.id, update);
+  }
+
   const running = loop.busy === 'run';
+  const candidateBusy = loop.busy === 'candidate';
+  const hasPendingDecisions = loop.pendingDecisions.length > 0;
+  const selectedActions = loop.selected
+    ? loop.actions.filter((action) => action.candidate_id === loop.selected?.id)
+    : [];
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <header className="sticky top-0 z-20 border-b border-border/80 bg-background/90 backdrop-blur-xl">
-        <div className="mx-auto flex h-[4.5rem] max-w-[1540px] items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-              <Command className="size-5" aria-hidden="true" />
-            </span>
-            <div className="min-w-0">
-              <p className="font-heading text-lg font-semibold tracking-[-0.03em]">
-                CandidateLoop
-              </p>
-              <p className="truncate text-xs text-muted-foreground">
-                Recruiting operations cockpit
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {loop.pendingDecisions.length > 0 && (
-              <span className="hidden items-center gap-1.5 rounded-full border border-violet-300 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800 sm:flex">
-                <ShieldAlert className="size-3.5" aria-hidden="true" />
-                {loop.pendingDecisions.length === 1
-                  ? '1 decision needs you'
-                  : `${loop.pendingDecisions.length} decisions need you`}
-              </span>
-            )}
-
-            {/* Truthful execution-mode label straight from the API. */}
-            <span
-              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
-                loop.connected
-                  ? 'border-border bg-secondary text-muted-foreground'
-                  : 'border-amber-300 bg-amber-50 font-medium text-amber-800'
-              }`}
-              title={
-                loop.connected
-                  ? 'Connected to the CandidateLoop API'
-                  : 'API unavailable — showing preview data, not live state'
-              }
-            >
-              {loop.connected ? (
-                <Wifi className="size-3.5 text-emerald-600" aria-hidden="true" />
-              ) : (
-                <WifiOff className="size-3.5 text-amber-600" aria-hidden="true" />
-              )}
-              {loop.connected ? (loop.executionMode ?? 'connected') : 'preview data'}
-            </span>
-
-            <Button
-              variant="outline"
-              size="sm"
-              aria-label="Reset demo to the four-candidate starting state"
-              onClick={handleReset}
-              disabled={loop.busy !== null}
-            >
-              <RefreshCw
-                className={loop.busy === 'reset' ? 'animate-spin' : ''}
-                aria-hidden="true"
-              />
-              <span className="hidden sm:inline">Reset demo</span>
-            </Button>
-            <Button size="sm" onClick={handleRun} disabled={loop.busy !== null}>
-              {running ? (
-                <RefreshCw className="animate-spin" aria-hidden="true" />
-              ) : (
-                <Play className="fill-current" aria-hidden="true" />
-              )}
-              {running ? 'Running…' : 'Run agent'}
-            </Button>
-          </div>
+    <main className="flex min-h-dvh flex-col bg-background text-foreground xl:h-dvh xl:overflow-hidden">
+      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2 sm:px-5">
+        <div className="mr-auto flex min-w-0 items-baseline gap-2">
+          <span className="shrink-0 text-sm font-semibold tracking-[-0.012em]">
+            CandidateLoop
+          </span>
+          <span className="truncate text-xs text-muted-foreground">
+            Recruiting operations
+          </span>
         </div>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleReset}
+          disabled={loop.busy !== null}
+          aria-label="Reset demo to the four-candidate starting state"
+        >
+          {loop.busy === 'reset' ? 'Resetting…' : 'Reset demo'}
+        </Button>
+        <Button size="sm" onClick={handleRun} disabled={loop.busy !== null}>
+          {running ? 'Scanning…' : 'Scan pipeline'}
+        </Button>
       </header>
 
-      <div className="mx-auto max-w-[1540px] space-y-4 px-4 py-4 sm:px-6 lg:px-8">
-        <RunConsole
-          phase={loop.phase}
-          summary={loop.summary}
-          failedAction={loop.failedAction}
-          statusMessage={loop.statusMessage}
-          onRetry={handleRetry}
-          retryDisabled={loop.busy !== null}
+      <RunConsole
+        phase={loop.phase}
+        summary={loop.summary}
+        failedAction={loop.failedAction}
+        statusMessage={loop.statusMessage}
+        onRetry={handleRetry}
+        retryDisabled={loop.busy !== null}
+      />
+
+      <div
+        className={`grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[258px_minmax(0,1fr)] xl:overflow-hidden ${
+          hasPendingDecisions
+            ? 'xl:grid-cols-[258px_minmax(400px,1fr)_336px]'
+            : 'xl:grid-cols-[258px_minmax(400px,1fr)_186px]'
+        }`}
+      >
+        <CandidateRail
+          candidates={loop.candidates}
+          selectedId={loop.selected?.id ?? loop.selectedId}
+          onSelect={loop.setSelectedId}
+          onAdd={handleAddCandidate}
+          disabled={loop.busy !== null}
         />
 
-        <div className="grid items-start gap-4 lg:grid-cols-[18rem_minmax(0,1fr)] xl:grid-cols-[18rem_minmax(0,1fr)_21rem]">
-          <CandidateRail
-            candidates={loop.candidates}
-            selectedId={loop.selected?.id ?? loop.selectedId}
-            onSelect={loop.setSelectedId}
+        <section className="min-w-0 bg-card xl:min-h-0 xl:overflow-y-auto">
+          <CandidateDetail
+            candidate={loop.selected}
+            onEdit={handleEditCandidate}
+            onRemove={handleRemoveCandidate}
+            disabled={loop.busy !== null}
           />
+          <ActivityFeed
+            actions={selectedActions}
+            revealOrder={loop.revealOrder}
+          />
+        </section>
 
-          <section className="min-w-0 space-y-4">
-            <CandidateDetail candidate={loop.selected} />
-            <ActivityFeed actions={loop.actions} revealOrder={loop.revealOrder} />
-          </section>
-
-          <div className="lg:col-span-2 xl:col-span-1 xl:sticky xl:top-[5.75rem]">
-            <DecisionQueue
-              decisions={loop.decisions}
-              candidates={loop.candidates}
-              busy={loop.busy !== null}
-              onResolve={handleResolve}
-            />
-          </div>
+        <div className="border-t border-border lg:col-span-2 xl:col-span-1 xl:min-h-0 xl:border-l xl:border-t-0 xl:overflow-y-auto">
+          <DecisionQueue
+            decisions={loop.decisions}
+            candidates={loop.candidates}
+            busy={loop.busy !== null}
+            onResolve={handleResolve}
+          />
         </div>
       </div>
+
+      <CandidateEditorDialog
+        open={editorOpen}
+        candidate={editingCandidate}
+        busy={candidateBusy}
+        onOpenChange={setEditorOpen}
+        onSave={saveCandidate}
+      />
+      <RemoveCandidateDialog
+        open={removeOpen}
+        candidate={removingCandidate}
+        busy={candidateBusy}
+        onOpenChange={setRemoveOpen}
+        onRemove={() =>
+          removingCandidate
+            ? loop.deleteCandidate(removingCandidate.id)
+            : Promise.reject(new Error('No candidate selected.'))
+        }
+      />
     </main>
   );
 }

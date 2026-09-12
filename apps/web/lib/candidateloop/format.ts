@@ -4,29 +4,72 @@ import type { Candidate } from './types';
  * The backend pins demo time to a fixed UTC instant so reset and replay stay
  * reproducible. Rendering in UTC keeps the demo identical on every machine.
  */
+const LOCALE = 'en-US';
 const UTC = 'UTC';
 
+/**
+ * The fixed instant the backend treats as "now" (see `DEMO_NOW` in
+ * `candidateloop/config.py`). Candidate dates entered in the cockpit should be
+ * relative to this clock, not the browser's wall clock, or overdue/stale
+ * policies will not fire the way the demo expects.
+ */
+export const DEMO_NOW = '2026-09-08T16:00:00Z';
+
+const DATE_FORMATTER = new Intl.DateTimeFormat(LOCALE, {
+  weekday: 'short',
+  month: 'short',
+  day: 'numeric',
+  timeZone: UTC,
+});
+
+const TIME_FORMATTER = new Intl.DateTimeFormat(LOCALE, {
+  hour: 'numeric',
+  minute: '2-digit',
+  hourCycle: 'h12',
+  timeZone: UTC,
+});
+
+function dateTimePart(
+  formatter: Intl.DateTimeFormat,
+  date: Date,
+  type: Intl.DateTimeFormatPartTypes,
+) {
+  // ICU literals vary by runtime, so use only semantic parts and add separators ourselves.
+  const value = formatter
+    .formatToParts(date)
+    .find((part) => part.type === type)?.value;
+
+  if (value === undefined) {
+    throw new RangeError(`Date formatter did not produce a ${type} part`);
+  }
+
+  return value;
+}
+
+function formatTimeParts(date: Date) {
+  const hour = dateTimePart(TIME_FORMATTER, date, 'hour');
+  const minute = dateTimePart(TIME_FORMATTER, date, 'minute');
+  const dayPeriod = dateTimePart(TIME_FORMATTER, date, 'dayPeriod');
+
+  return `${hour}:${minute} ${dayPeriod}`;
+}
+
 export function formatTime(value: string) {
-  return new Intl.DateTimeFormat('en', {
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZone: UTC,
-  }).format(new Date(value));
+  return formatTimeParts(new Date(value));
 }
 
 export function formatDayTime(value: string) {
-  return new Intl.DateTimeFormat('en', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZone: UTC,
-  }).format(new Date(value));
+  const date = new Date(value);
+  const weekday = dateTimePart(DATE_FORMATTER, date, 'weekday');
+  const month = dateTimePart(DATE_FORMATTER, date, 'month');
+  const day = dateTimePart(DATE_FORMATTER, date, 'day');
+
+  return `${weekday}, ${month} ${day} · ${formatTimeParts(date)}`;
 }
 
 /** ISO-8601 instants the backend embeds in operational text, e.g. a scheduled slot. */
-const ISO_INSTANT = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
+const ISO_INSTANT =
+  /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g;
 
 /**
  * Rewrites machine timestamps inside API-authored copy into the same readable
@@ -36,15 +79,39 @@ const ISO_INSTANT = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}
 export function humanizeTimestamps(text: string) {
   return text.replace(ISO_INSTANT, (match) => {
     const parsed = new Date(match);
-    return Number.isNaN(parsed.getTime()) ? match : `${formatDayTime(match)} UTC`;
+    return Number.isNaN(parsed.getTime())
+      ? match
+      : `${formatDayTime(match)} UTC`;
   });
 }
 
-/** Ordered coordination pipeline. `On Hold` and `Closed` are terminal, not steps. */
-export const STAGE_PIPELINE = [
+/** Opaque backend identifiers the API embeds in audit copy, e.g. `decision_<hex>`. */
+const INTERNAL_ID = /\s?\b(?:decision|action|run|cand)_[0-9a-f]{8,}\b/g;
+
+/**
+ * Drops internal record ids from API-authored copy so "Decision decision_ab12…
+ * created." reads as "Decision created." Presentation only — the backend audit
+ * record keeps the id.
+ */
+export function redactInternalIds(text: string) {
+  return text.replace(INTERNAL_ID, '');
+}
+
+/** Full presentation pass for operational text: readable timestamps, no internal ids. */
+export function presentOperationalText(text: string) {
+  return redactInternalIds(humanizeTimestamps(text));
+}
+
+/** Stages generic candidate management may set without a workflow authorization. */
+export const CANDIDATE_MANAGEMENT_STAGES = [
   'Recruiter Review',
   'Technical Interview',
   'Interview Complete',
+] as const;
+
+/** Ordered coordination pipeline. `On Hold` and `Closed` are terminal, not steps. */
+export const STAGE_PIPELINE = [
+  ...CANDIDATE_MANAGEMENT_STAGES,
   'Panel Scheduling',
   'Panel Interview',
 ] as const;

@@ -93,3 +93,117 @@ This file records handoffs between Claude Code, Codex, Antigravity, and the huma
 
 - `deterministic_local` remains the intentional local/test/demo default; production Strands mode
   must fail visibly rather than substitute deterministic behavior.
+
+## 2026-09-12 — CODEX — Milestone A Dynamic Candidate Management
+
+### Completed
+
+- Added strict create/update/delete candidate APIs with server-generated identity and decision-state exclusion.
+- Synchronized requested feedback counts to real repository Feedback records used by deterministic and Strands runs.
+- Added candidate rail create/edit/remove dialogs and pending-decision deletion protection.
+- Covered dynamic reminders, decision escalation, no-action outcomes, five-candidate runs, idempotency, cleanup, and reset.
+
+### Files changed
+
+- Candidate models, in-memory repository, FastAPI routes/CORS, Strands completion validation, and backend tests.
+- Web candidate types/state, rail controls, management dialogs, page wiring, and run-console busy state.
+
+### Tests run
+
+- `ruff format --check .`, `ruff check .`, and `pytest -q` — 76 passed.
+- `npm run lint` and `npm run build` — pass.
+- `git diff --check` — pass.
+
+### Known issues
+
+- State remains intentionally in-memory; reset removes all user-created candidates.
+- The existing upstream Starlette/AnyIO deprecation warning remains under Python 3.14.
+
+### Recommended next step
+
+- Review the uncommitted Milestone A diff and exercise the add/edit/remove flow against a local API.
+
+### Important assumptions
+
+- Non-null `next_interview_at` remains blocked until a recorded human Advance exists; the UI does not expose it.
+- Generated submitted feedback records represent completion only and contain no recommendation or judgment.
+
+## 2026-09-12 — CODEX — Milestone A Hardening
+
+### Completed
+
+- Restricted candidate-management request stages to Recruiter Review, Technical Interview, and Interview Complete.
+- Made candidate create/update plus feedback synchronization atomic under the repository lock with rollback on failure.
+- Preserved decision-driven and scheduling-tool stage transitions and locked workflow-controlled stages in the edit UI.
+
+### Files changed
+
+- Candidate request models, repository mutation methods, CRUD route calls, candidate form stage choices, and focused tests.
+
+### Tests run
+
+- `ruff format --check .`, `ruff check .`, and `pytest -q` — 90 passed.
+- `npm run lint`, `npm run build`, and `git diff --check` — pass.
+
+### Known issues
+
+- The existing upstream Starlette/AnyIO deprecation warning remains under Python 3.14.
+
+### Recommended next step
+
+- Review the still-uncommitted Milestone A diff before committing.
+
+### Important assumptions
+
+- Metadata edits remain allowed after a workflow-controlled transition, but PATCH must omit the protected stage.
+
+## 2026-09-12 — CODEX — Deterministic CandidateLoop Dates
+
+### Completed
+
+- Replaced combined locale-generated date/time strings with explicit `en-US`/UTC parts and manually inserted punctuation.
+- Audited every SSR-visible CandidateLoop date display; all use the shared deterministic helpers.
+
+### Files changed
+
+- `apps/web/lib/candidateloop/format.ts`.
+
+### Tests run
+
+- `npm run lint` and `npm run build` — pass.
+- Direct formatter check confirms `2026-09-09T14:00:00Z` renders as `Wed, Sep 9 · 2:00 PM`.
+
+### Known issues
+
+- No first-party frontend test runner or unit-test suite is configured; lint, production build, and a direct runtime check cover this focused change.
+
+## 2026-09-12 — CODEX — CandidateLoop Design Integration
+
+### Completed
+
+- Recreated the supplied compact three-rail operations layout with a neutral visual system, real backend pipeline stages, compact run status, selected-candidate activity, and a responsive decision rail.
+- Moved Add/Edit/Remove into the requested rail and selected-candidate controls while reusing the existing candidate-management dialogs and API mutations.
+- Kept operational explanations collapsed by default and removed the runtime chip, idle banner, metrics grid, and human-control explainer card.
+
+### Files changed
+
+- Web page shell, global theme, candidate rail/detail, activity feed, decision queue, and run console under `apps/web/`.
+- `HANDOFF.md`.
+
+### Tests run
+
+- `npm run lint` and `npm run build` — pass.
+- Deterministic focused backend API/candidate-management tests — 38 passed.
+- `git diff --check` — pass.
+
+### Known issues
+
+- The existing upstream Starlette/AnyIO deprecation warning remains under Python 3.14.
+
+### Recommended next step
+
+- Exercise the compact layout at demo viewport sizes against a running local API.
+
+### Important assumptions
+
+- The prototype supplies presentation only; all workflow state, actions, decisions, and candidate mutations continue to come from the existing hook and FastAPI backend.

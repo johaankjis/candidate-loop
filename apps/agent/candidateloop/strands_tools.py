@@ -59,6 +59,7 @@ class StrandsRecruitingToolAdapter:
         self.summary = RunSummary()
         self.active_candidate_ids: set[str] | None = None
         self.handled_candidate_ids: set[str] = set()
+        self.actioned_candidate_ids: set[str] = set()
 
     def assert_complete(self) -> None:
         """Require the model-driven pass to account for every active candidate."""
@@ -71,6 +72,10 @@ class StrandsRecruitingToolAdapter:
         self._assert_one_terminal_outcome_per_candidate()
         pending_work: set[str] = set()
         for candidate_id in self.active_candidate_ids:
+            # A successful write is the terminal outcome for this pass, even when
+            # another pending scorecard can be handled on a later run.
+            if candidate_id in self.actioned_candidate_ids:
+                continue
             candidate = self._candidate(candidate_id)
             feedback = self.operations.get_interview_feedback(candidate_id)
             communications = self.repository.communications_for(candidate_id)
@@ -413,6 +418,8 @@ class StrandsRecruitingToolAdapter:
         if candidate_id in self.handled_candidate_ids:
             raise RuntimeError(f"Candidate {candidate_id} already has a terminal outcome this run")
         self.handled_candidate_ids.add(candidate_id)
+        if event_type != "no_action":
+            self.actioned_candidate_ids.add(candidate_id)
         self.operations.record_action(
             AgentAction(
                 id=f"action_{uuid4().hex}",

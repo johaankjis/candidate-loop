@@ -1,55 +1,69 @@
 'use client';
 
-import { CalendarDays, Check, ClipboardCheck, Clock3, UserRoundCheck } from 'lucide-react';
+import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   STAGE_PIPELINE,
-  candidateSignal,
   formatDayTime,
   stageIndex,
-  stageTone,
   titleCase,
-  waitTone,
 } from '@/lib/candidateloop/format';
 import type { Candidate } from '@/lib/candidateloop/types';
 
-/** Horizontal pipeline so "where is this candidate" is answered without reading. */
 function StagePipeline({ stage }: { stage: string }) {
   const current = stageIndex(stage);
 
   if (current === -1) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-        Workflow closed at <span className="font-medium text-slate-800">{stage}</span> by a
+      <p className="mt-3 text-xs text-muted-foreground">
+        Workflow closed at{' '}
+        <span className="font-medium text-foreground">{stage}</span> by a
         recruiter decision.
-      </div>
+      </p>
     );
   }
 
   return (
-    <ol className="flex items-center gap-1 overflow-x-auto" aria-label="Pipeline stage">
+    <ol
+      className="mt-3 flex max-w-2xl items-start gap-1 overflow-x-auto"
+      aria-label="Pipeline stage"
+    >
       {STAGE_PIPELINE.map((step, index) => {
         const done = index < current;
         const active = index === current;
         return (
-          <li key={step} className="flex min-w-0 flex-1 items-center gap-1">
-            <div className="min-w-0 flex-1">
-              <span
-                className={`block h-1 rounded-full transition-colors ${
-                  done ? 'bg-emerald-400' : active ? 'bg-sky-500' : 'bg-border'
-                }`}
-              />
-              <span
-                className={`mt-1.5 block truncate text-[0.68rem] leading-4 ${
-                  active
-                    ? 'font-medium text-foreground'
-                    : done
-                      ? 'text-muted-foreground'
-                      : 'text-muted-foreground/60'
-                }`}
-              >
-                {step}
-              </span>
-            </div>
+          <li
+            key={step}
+            className={`min-w-20 ${active ? 'flex-[1.3]' : 'flex-1'}`}
+            aria-current={active ? 'step' : undefined}
+          >
+            <span
+              className={`block rounded-sm ${
+                done
+                  ? 'mt-1 h-0.5 bg-foreground/85'
+                  : active
+                    ? 'h-1.5 bg-[oklch(0.52_0.12_252)]'
+                    : 'mt-1 h-0.5 bg-border'
+              }`}
+              aria-hidden="true"
+            />
+            <span
+              className={`mt-1 block truncate text-xs ${
+                active
+                  ? 'font-semibold text-foreground'
+                  : done
+                    ? 'text-muted-foreground'
+                    : 'text-muted-foreground/60'
+              }`}
+            >
+              {step}
+            </span>
           </li>
         );
       })}
@@ -57,123 +71,122 @@ function StagePipeline({ stage }: { stage: string }) {
   );
 }
 
-function Stat({
-  icon: Icon,
+function Fact({
   label,
   value,
-  detail,
-  tone,
+  attention = false,
 }: {
-  icon: typeof Clock3;
   label: string;
   value: string;
-  detail: string;
-  tone?: string;
+  attention?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-border p-3">
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+    <div className="min-w-0 border-border px-4 first:pl-0 sm:border-l sm:first:border-l-0">
+      <dt className="truncate text-xs font-semibold uppercase tracking-[0.07em] text-muted-foreground">
         {label}
-      </p>
-      <p className={`mt-1.5 font-heading text-lg font-semibold tracking-tight ${tone ?? ''}`}>
+      </dt>
+      <dd
+        className={`mt-1 text-sm tabular-nums ${
+          attention ? 'font-semibold text-amber-800' : 'text-foreground'
+        }`}
+      >
         {value}
-      </p>
-      <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{detail}</p>
+      </dd>
     </div>
   );
 }
 
-export function CandidateDetail({ candidate }: { candidate: Candidate | undefined }) {
-  if (!candidate) return null;
-  const signal = candidateSignal(candidate);
+export function CandidateDetail({
+  candidate,
+  onEdit,
+  onRemove,
+  disabled,
+}: {
+  candidate: Candidate | undefined;
+  onEdit: (candidate: Candidate) => void;
+  onRemove: (candidate: Candidate) => void;
+  disabled: boolean;
+}) {
+  if (!candidate) {
+    return (
+      <section className="border-b border-border px-6 py-5 text-sm text-muted-foreground">
+        Add a candidate to start a workflow.
+      </section>
+    );
+  }
+
   const required = candidate.required_feedback_count;
   const submitted = candidate.submitted_feedback_count;
-
   const decisionValue =
     candidate.human_decision_status === 'pending'
-      ? 'Awaiting you'
+      ? 'Ready for review'
       : candidate.last_human_resolution
-        ? titleCase(candidate.last_human_resolution)
-        : 'Not required';
-  const decisionDetail =
-    candidate.human_decision_status === 'pending'
-      ? 'CandidateLoop stopped and escalated'
-      : candidate.last_human_resolution
-        ? 'Recorded by a recruiter'
-        : 'No hiring judgment is due yet';
+        ? `${titleCase(candidate.last_human_resolution)} by you`
+        : 'None pending';
 
   return (
-    <section className="rounded-2xl border border-border bg-card shadow-[0_1px_2px_rgb(15_23_42/0.04)]">
-      <div className="border-b border-border px-5 py-4 sm:px-6">
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className={`rounded-full border px-2 py-0.5 text-xs ${stageTone(candidate.stage)}`}
+    <section className="border-b border-border px-5 py-4 sm:px-6">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <h1 className="text-xl font-semibold tracking-[-0.015em]">
+              {candidate.name}
+            </h1>
+            <span className="text-sm text-muted-foreground">
+              {candidate.role}
+            </span>
+          </div>
+        </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<Button variant="ghost" size="icon-sm" />}
+            aria-label={`Actions for ${candidate.name}`}
+            disabled={disabled}
           >
-            {candidate.stage}
-          </span>
-          <span className={`rounded-full border px-2 py-0.5 text-xs ${signal.chip}`}>
-            {signal.label}
-          </span>
-        </div>
-        <h1 className="mt-2 font-heading text-2xl font-semibold tracking-[-0.035em]">
-          {candidate.name}
-        </h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          {candidate.role} · {signal.detail}
-        </p>
-        <div className="mt-4">
-          <StagePipeline stage={candidate.stage} />
-        </div>
+            <MoreHorizontal aria-hidden="true" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-36">
+            <DropdownMenuItem onClick={() => onEdit(candidate)}>
+              <Pencil aria-hidden="true" /> Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() => onRemove(candidate)}
+            >
+              <Trash2 aria-hidden="true" /> Remove
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
-      <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4 sm:p-5">
-        <Stat
-          icon={Clock3}
-          label="Waiting time"
-          value={`${candidate.days_in_stage}d`}
-          detail={`In ${candidate.stage} since ${formatDayTime(candidate.stage_entered_at)} UTC`}
-          tone={waitTone(candidate.days_in_stage)}
+      <StagePipeline stage={candidate.stage} />
+
+      <dl className="mt-4 grid gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Fact
+          label="Waiting"
+          value={`${candidate.days_in_stage}d in ${candidate.stage}`}
+          attention={candidate.days_in_stage >= 5}
         />
-        <Stat
-          icon={ClipboardCheck}
-          label="Feedback status"
-          value={required > 0 ? `${submitted}/${required}` : 'None due'}
-          detail={
-            required === 0
-              ? 'No interview scorecards are expected at this stage'
-              : submitted >= required
-                ? 'All required scorecards received'
-                : `${required - submitted} scorecard${required - submitted === 1 ? '' : 's'} still outstanding`
-          }
-          tone={
-            required > 0 && submitted < required ? 'text-amber-700' : 'text-emerald-700'
-          }
+        <Fact
+          label="Feedback"
+          value={required > 0 ? `${submitted} of ${required}` : 'None due'}
+          attention={required > submitted}
         />
-        <Stat
-          icon={CalendarDays}
+        <Fact
           label="Upcoming interview"
-          value={candidate.next_interview_at ? formatDayTime(candidate.next_interview_at) : 'None'}
-          detail={
-            // Only claim the agent booked this when a recruiter advance actually
-            // unlocked scheduling. Seeded interviews are not the agent's work.
-            !candidate.next_interview_at
-              ? 'Nothing is currently on the calendar'
-              : candidate.last_human_resolution === 'ADVANCE'
-                ? 'Scheduled by CandidateLoop after the recruiter advance'
-                : 'Already on the calendar'
+          value={
+            candidate.next_interview_at
+              ? `${formatDayTime(candidate.next_interview_at)} UTC`
+              : 'None scheduled'
           }
         />
-        <Stat
-          icon={candidate.human_decision_status === 'pending' ? UserRoundCheck : Check}
-          label="Decision status"
+        <Fact
+          label="Decision"
           value={decisionValue}
-          detail={decisionDetail}
-          tone={
-            candidate.human_decision_status === 'pending' ? 'text-violet-700' : undefined
-          }
+          attention={candidate.human_decision_status === 'pending'}
         />
-      </div>
+      </dl>
     </section>
   );
 }

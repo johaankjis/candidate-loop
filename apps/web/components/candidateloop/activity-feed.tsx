@@ -1,133 +1,139 @@
 'use client';
 
-import {
-  ArrowRight,
-  CircleCheck,
-  Eye,
-  Hand,
-  MinusCircle,
-  Scale,
-  Sparkles,
-  Zap,
-} from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-import { useMemo, useState } from 'react';
-import { Badge } from '@/components/ui/badge';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { formatTime, humanizeTimestamps } from '@/lib/candidateloop/format';
-import type { AgentAction, AgentActionEventType } from '@/lib/candidateloop/types';
-
-/**
- * The four operational fields the backend records for every event. These are
- * structured tool-execution facts, not model reasoning traces.
- */
-const STEPS: { key: keyof AgentAction; label: string; icon: LucideIcon; tone: string }[] = [
-  { key: 'observed', label: 'Observed', icon: Eye, tone: 'text-sky-600' },
-  { key: 'reason', label: 'Reason', icon: Scale, tone: 'text-amber-600' },
-  { key: 'action', label: 'Action', icon: Zap, tone: 'text-indigo-600' },
-  { key: 'result', label: 'Result', icon: CircleCheck, tone: 'text-emerald-600' },
-];
+import { formatTime, presentOperationalText } from '@/lib/candidateloop/format';
+import type {
+  AgentAction,
+  AgentActionEventType,
+} from '@/lib/candidateloop/types';
 
 const EVENT_STYLE: Record<
   AgentActionEventType,
-  { icon: LucideIcon; medallion: string; card: string; ribbon?: string }
+  {
+    mark: string;
+    markTone: string;
+    label: string;
+    labelTone: string;
+    rule: string;
+    title: string;
+  }
 > = {
   tool_action: {
-    icon: Zap,
-    medallion: 'bg-emerald-100 text-emerald-700',
-    card: 'border-border',
+    mark: '→',
+    markTone: 'text-muted-foreground',
+    label: '',
+    labelTone: 'text-muted-foreground',
+    rule: 'border-l-transparent',
+    title: 'text-foreground',
   },
   human_decision: {
-    icon: Hand,
-    medallion: 'bg-violet-100 text-violet-700',
-    card: 'border-violet-300 bg-violet-50/40 ring-1 ring-violet-200',
-    ribbon: 'Stopped for human judgment',
+    mark: '◆',
+    markTone: 'text-amber-700',
+    label: 'Needs decision',
+    labelTone: 'text-amber-800',
+    rule: 'border-l-amber-600',
+    title: 'font-semibold text-foreground',
   },
   no_action: {
-    icon: MinusCircle,
-    medallion: 'bg-slate-100 text-slate-500',
-    card: 'border-dashed border-border',
+    mark: '–',
+    markTone: 'text-muted-foreground/60',
+    label: 'No action',
+    labelTone: 'text-muted-foreground',
+    rule: 'border-l-border/60',
+    title: 'font-normal text-muted-foreground',
   },
 };
 
-type Filter = 'all' | 'tool_action' | 'human_decision' | 'no_action';
-
-const FILTERS: { key: Filter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'tool_action', label: 'Actions' },
-  { key: 'human_decision', label: 'Escalations' },
-  { key: 'no_action', label: 'Skipped' },
+const DETAILS: { key: keyof AgentAction; label: string }[] = [
+  { key: 'observed', label: 'Observed' },
+  { key: 'reason', label: 'Reason' },
+  { key: 'action', label: 'Action' },
+  { key: 'result', label: 'Result' },
 ];
 
 const REVEAL_BASE_MS = 120;
 const REVEAL_STEP_MS = 170;
 
-function ActionCard({
+function ActivityRow({
   item,
+  expanded,
+  onToggle,
   revealIndex,
 }: {
   item: AgentAction;
+  expanded: boolean;
+  onToggle: () => void;
   revealIndex: number | undefined;
 }) {
   const style = EVENT_STYLE[item.event_type] ?? EVENT_STYLE.tool_action;
-  const Icon = style.icon;
 
   return (
     <article
-      className={`cl-card rounded-xl border p-4 ${style.card}`}
-      // Replays the run one event at a time; delay only, no synthesized content.
+      className={`cl-card -ml-2 grid grid-cols-[20px_minmax(0,1fr)] border-b border-l-2 border-b-border/60 py-2 pl-2 ${style.rule}`}
       style={
         revealIndex === undefined
           ? undefined
-          : { animationDelay: `${REVEAL_BASE_MS + revealIndex * REVEAL_STEP_MS}ms` }
+          : {
+              animationDelay: `${REVEAL_BASE_MS + revealIndex * REVEAL_STEP_MS}ms`,
+            }
       }
-      data-revealing={revealIndex === undefined ? undefined : 'true'}
     >
-      <header className="flex flex-wrap items-start gap-3">
-        <span className={`grid size-8 shrink-0 place-items-center rounded-lg ${style.medallion}`}>
-          <Icon className="size-4" aria-hidden="true" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold">{item.action}</h3>
-            <Badge variant="outline" className="font-normal">
-              {item.candidate_name}
-            </Badge>
+      <span
+        className={`font-mono text-xs leading-5 ${style.markTone}`}
+        aria-hidden="true"
+      >
+        {style.mark}
+      </span>
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-3">
+          <div className="min-w-0 flex flex-1 flex-wrap items-baseline gap-x-2">
+            <h3 className={`text-sm leading-5 ${style.title}`}>
+              {item.action}
+            </h3>
+            {style.label && (
+              <span
+                className={`text-xs font-semibold uppercase tracking-[0.06em] ${style.labelTone}`}
+              >
+                {style.label}
+              </span>
+            )}
           </div>
-          {style.ribbon && (
-            <p className="mt-1 text-xs font-medium uppercase tracking-[0.08em] text-violet-700">
-              {style.ribbon}
-            </p>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <code className="rounded-md bg-secondary px-1.5 py-0.5 font-mono text-[0.68rem] text-muted-foreground">
-            {item.tool}
-          </code>
-          <time className="text-xs tabular-nums text-muted-foreground">
+          <time className="shrink-0 font-mono text-xs text-muted-foreground">
             {formatTime(item.created_at)}
           </time>
         </div>
-      </header>
+        <p className="text-xs leading-5 text-muted-foreground">
+          {presentOperationalText(item.result)}
+        </p>
 
-      <dl className="mt-3 space-y-1.5 border-l-2 border-border pl-3">
-        {STEPS.map((step) => {
-          const StepIcon = step.icon;
-          return (
-            <div key={step.label} className="grid gap-1 sm:grid-cols-[6.5rem_1fr] sm:gap-3">
-              <dt
-                className={`flex items-center gap-1.5 text-[0.68rem] font-semibold uppercase tracking-[0.07em] ${step.tone}`}
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          className="mt-0.5 -ml-2 h-6 px-2 font-normal text-muted-foreground"
+          aria-expanded={expanded}
+          onClick={onToggle}
+        >
+          {expanded ? 'Hide reasoning' : 'Reasoning'}
+        </Button>
+
+        {expanded && (
+          <dl className="mb-1 grid gap-1 border-l border-border pl-3">
+            {DETAILS.map((detail) => (
+              <div
+                key={detail.label}
+                className="grid gap-0.5 text-xs sm:grid-cols-[62px_minmax(0,1fr)] sm:gap-2"
               >
-                <StepIcon className="size-3.5 shrink-0" aria-hidden="true" />
-                {step.label}
-              </dt>
-              <dd className="text-sm leading-6 text-foreground/85">
-                {humanizeTimestamps(String(item[step.key]))}
-              </dd>
-            </div>
-          );
-        })}
-      </dl>
+                <dt className="text-muted-foreground">{detail.label}</dt>
+                <dd className="leading-5 text-foreground/75">
+                  {presentOperationalText(String(item[detail.key]))}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </div>
     </article>
   );
 }
@@ -139,106 +145,63 @@ export function ActivityFeed({
   actions: AgentAction[];
   revealOrder: Record<string, number>;
 }) {
-  const [filter, setFilter] = useState<Filter>('all');
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [allOpen, setAllOpen] = useState(false);
 
-  const visible = useMemo(
-    () => (filter === 'all' ? actions : actions.filter((item) => item.event_type === filter)),
-    [actions, filter],
-  );
-
-  /**
-   * Actions arrive newest-first, so consecutive ids group cleanly into runs.
-   * Within a run the API also returns reverse order and every event shares one
-   * timestamp, so each group is flipped back into the order the agent actually
-   * scanned candidates. Newest run still sorts first.
-   */
-  const groups = useMemo(() => {
-    const out: { runId: string; items: AgentAction[] }[] = [];
-    for (const item of visible) {
-      const current = out.at(-1);
-      if (current && current.runId === item.run_id) current.items.push(item);
-      else out.push({ runId: item.run_id, items: [item] });
-    }
-    return out.map((group) => ({ ...group, items: [...group.items].reverse() }));
-  }, [visible]);
+  function toggleAll() {
+    setAllOpen((current) => !current);
+    setExpanded({});
+  }
 
   return (
-    <section className="rounded-2xl border border-border bg-card shadow-[0_1px_2px_rgb(15_23_42/0.04)]">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3.5 sm:px-6">
-        <div>
-          <h2 className="text-sm font-semibold">Agent activity</h2>
-          <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-            Observed <ArrowRight className="size-3" aria-hidden="true" /> Reason
-            <ArrowRight className="size-3" aria-hidden="true" /> Action
-            <ArrowRight className="size-3" aria-hidden="true" /> Result
-          </p>
-        </div>
-        <div className="flex items-center gap-1" role="toolbar" aria-label="Filter agent activity">
-          {FILTERS.map((option) => (
-            <Button
-              key={option.key}
-              size="xs"
-              variant={filter === option.key ? 'secondary' : 'ghost'}
-              aria-pressed={filter === option.key}
-              onClick={() => setFilter(option.key)}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
+    <section>
+      <div className="flex items-center gap-3 px-5 pb-1 pt-3 sm:px-6">
+        <h2 className="text-xs font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+          Activity
+        </h2>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {actions.length}
+        </span>
+        {actions.length > 0 && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="ml-auto font-normal text-muted-foreground"
+            onClick={toggleAll}
+          >
+            {allOpen ? 'Collapse reasoning' : 'Expand reasoning'}
+          </Button>
+        )}
       </div>
 
-      {groups.length === 0 ? (
-        <div className="grid min-h-56 place-items-center px-6 py-10 text-center">
-          <div>
-            <span className="mx-auto grid size-12 place-items-center rounded-2xl bg-sky-50 text-sky-700">
-              <Sparkles className="size-5" aria-hidden="true" />
-            </span>
-            <h3 className="mt-4 text-sm font-semibold">
-              {actions.length === 0
-                ? 'The operations queue is ready'
-                : 'Nothing matches this filter'}
-            </h3>
-            <p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-muted-foreground">
-              {actions.length === 0
-                ? 'Run the agent to scan every active workflow and safely handle the routine coordination it finds.'
-                : 'Switch back to All to see the rest of this run.'}
-            </p>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-5 p-4 sm:p-5">
-          {groups.map((group, groupIndex) => {
-            const handled = group.items.filter(
-              (item) => item.event_type !== 'no_action',
-            ).length;
+      <div className="px-5 pb-7 sm:px-6">
+        {actions.length === 0 ? (
+          <p className="py-2 text-sm text-muted-foreground">
+            No activity recorded for this candidate.
+          </p>
+        ) : (
+          actions.map((item, index) => {
+            const isExpanded = expanded[item.id] ?? allOpen;
             return (
-              <section key={group.runId} aria-label={`Agent run ${group.runId}`}>
-                <div className="mb-2 flex items-center gap-2">
-                  <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                    {groupIndex === 0 ? 'Latest run' : 'Earlier run'}
-                  </h3>
-                  <span className="text-xs text-muted-foreground">
-                    {handled} handled · {group.items.length - handled} skipped
-                  </span>
-                  <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                </div>
-                <div className="space-y-2.5">
-                  {group.items.map((item, index) => (
-                    <ActionCard
-                      key={item.id}
-                      item={item}
-                      // revealOrder only marks membership in the newest run; the
-                      // stagger follows display order so it plays top to bottom.
-                      revealIndex={revealOrder[item.id] === undefined ? undefined : index}
-                    />
-                  ))}
-                </div>
-              </section>
+              <ActivityRow
+                key={item.id}
+                item={item}
+                expanded={isExpanded}
+                onToggle={() =>
+                  setExpanded((current) => ({
+                    ...current,
+                    [item.id]: !(current[item.id] ?? allOpen),
+                  }))
+                }
+                revealIndex={
+                  revealOrder[item.id] === undefined ? undefined : index
+                }
+              />
             );
-          })}
-        </div>
-      )}
+          })
+        )}
+      </div>
     </section>
   );
 }

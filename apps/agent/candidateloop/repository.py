@@ -19,6 +19,10 @@ from candidateloop.models import (
 from candidateloop.seed import demo_availability, demo_candidates, demo_feedback, demo_interviewers
 
 
+class PendingHumanDecisionError(ValueError):
+    """Raised when destructive cleanup would remove an unresolved recruiter decision."""
+
+
 @dataclass(frozen=True)
 class RepositorySnapshot:
     """Deep-copied repository state used to make model-driven runs atomic."""
@@ -108,6 +112,112 @@ class InMemoryRepository:
                 [item for item in self.feedback.values() if item.candidate_id == candidate_id]
             )
 
+    def create_candidate_with_feedback(
+        self, candidate: Candidate, required_count: int, submitted_count: int
+    ) -> None:
+        """Atomically create a candidate and its synchronized feedback records."""
+        with self._lock:
+            if candidate.id in self.candidates:
+                raise ValueError("Candidate already exists")
+            previous_feedback = deepcopy(self.feedback)
+            previous_interviewers = deepcopy(self.interviewers)
+            try:
+                self.candidates[candidate.id] = candidate
+                self.synchronize_candidate_feedback(candidate.id, required_count, submitted_count)
+            except Exception:
+                self.candidates.pop(candidate.id, None)
+                self.feedback = previous_feedback
+                self.interviewers = previous_interviewers
+                raise
+
+    def update_candidate_with_feedback(
+        self, candidate: Candidate, required_count: int, submitted_count: int
+    ) -> None:
+        """Atomically replace a candidate and synchronize its feedback records."""
+        with self._lock:
+            previous_candidate = deepcopy(self.candidates.get(candidate.id))
+            if previous_candidate is None:
+                raise ValueError("Unknown candidate")
+            previous_feedback = deepcopy(self.feedback)
+            previous_interviewers = deepcopy(self.interviewers)
+            try:
+                self.candidates[candidate.id] = candidate
+                self.synchronize_candidate_feedback(candidate.id, required_count, submitted_count)
+            except Exception:
+                self.candidates[candidate.id] = previous_candidate
+                self.feedback = previous_feedback
+                self.interviewers = previous_interviewers
+                raise
+
+    def synchronize_candidate_feedback(
+        self, candidate_id: str, required_count: int, submitted_count: int
+    ) -> None:
+        """Make scorecard objects exactly match the candidate's requested counts.
+
+        Existing feedback/interviewer assignments are retained in insertion order. New
+        entries use demo interviewers first, then candidate-scoped synthetic interviewers.
+        Generated submitted entries carry completion state only, never recommendations.
+        """
+        if required_count < 0 or submitted_count < 0 or submitted_count > required_count:
+            raise ValueError("Feedback counts are invalid")
+        with self._lock:
+            candidate = self.candidates.get(candidate_id)
+            if candidate is None:
+                raise ValueError("Unknown candidate")
+
+            existing = [
+                item for item in self.feedback.values() if item.candidate_id == candidate_id
+            ]
+            interviewer_ids = [item.interviewer_id for item in existing[:required_count]]
+            for interviewer in demo_interviewers():
+                if len(interviewer_ids) >= required_count:
+                    break
+                if interviewer.id not in interviewer_ids:
+                    interviewer_ids.append(interviewer.id)
+
+            while len(interviewer_ids) < required_count:
+                index = len(interviewer_ids) + 1
+                interviewer_id = f"int_generated_{candidate_id}_{index:02d}"
+                if interviewer_id not in self.interviewers:
+                    self.interviewers[interviewer_id] = Interviewer(
+                        id=interviewer_id,
+                        name=f"Synthetic Interviewer {index}",
+                        email=f"{interviewer_id}@example.test",
+                        role="Interview panelist",
+                    )
+                interviewer_ids.append(interviewer_id)
+
+            synchronized: dict[str, Feedback] = {}
+            submitted_at = candidate.interview_completed_at or candidate.stage_entered_at
+            interview_id = f"iv_{candidate_id}_feedback"
+            for index, interviewer_id in enumerate(interviewer_ids):
+                prior = existing[index] if index < len(existing) else None
+                is_submitted = index < submitted_count
+                feedback_id = prior.id if prior else f"fb_{candidate_id}_{index + 1:02d}"
+                synchronized[feedback_id] = Feedback(
+                    id=feedback_id,
+                    candidate_id=candidate_id,
+                    interviewer_id=interviewer_id,
+                    interview_id=prior.interview_id if prior else interview_id,
+                    status="submitted" if is_submitted else "pending",
+                    submitted_at=(
+                        ((prior.submitted_at if prior else None) or submitted_at)
+                        if is_submitted
+                        else None
+                    ),
+                    recommendation=prior.recommendation if prior and is_submitted else None,
+                    summary=prior.summary if prior and is_submitted else None,
+                )
+
+            self.feedback = {
+                feedback_id: item
+                for feedback_id, item in self.feedback.items()
+                if item.candidate_id != candidate_id
+            }
+            self.feedback.update(synchronized)
+            candidate.required_feedback_count = required_count
+            self.candidates[candidate_id] = candidate
+
     def interviewer(self, interviewer_id: str) -> Interviewer | None:
         with self._lock:
             item = self.interviewers.get(interviewer_id)
@@ -126,6 +236,47 @@ class InMemoryRepository:
     def save_candidate(self, candidate: Candidate) -> None:
         with self._lock:
             self.candidates[candidate.id] = candidate
+
+    def delete_candidate(self, candidate_id: str) -> bool:
+        """Delete a candidate and all candidate-owned state, unless judgment is pending."""
+        with self._lock:
+            candidate = self.candidates.get(candidate_id)
+            if candidate is None:
+                return False
+            if any(
+                item.candidate_id == candidate_id and item.status == "pending"
+                for item in self.decisions.values()
+            ):
+                raise PendingHumanDecisionError("Candidate has a pending human decision")
+
+            self.feedback = {
+                item_id: item
+                for item_id, item in self.feedback.items()
+                if item.candidate_id != candidate_id
+            }
+            self.communications = {
+                item_id: item
+                for item_id, item in self.communications.items()
+                if item.candidate_id != candidate_id
+            }
+            self.actions = {
+                item_id: item
+                for item_id, item in self.actions.items()
+                if item.candidate_id != candidate_id
+            }
+            self.decisions = {
+                item_id: item
+                for item_id, item in self.decisions.items()
+                if item.candidate_id != candidate_id
+            }
+            generated_prefix = f"int_generated_{candidate_id}_"
+            self.interviewers = {
+                item_id: item
+                for item_id, item in self.interviewers.items()
+                if not item_id.startswith(generated_prefix)
+            }
+            del self.candidates[candidate_id]
+            return True
 
     def open_decision_for(self, candidate_id: str) -> HumanDecision | None:
         with self._lock:
