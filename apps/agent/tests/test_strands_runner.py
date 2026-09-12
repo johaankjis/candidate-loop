@@ -105,6 +105,55 @@ def test_real_strands_loop_performs_seeded_safe_actions():
     assert "CandidateLoop operating policy" in runner.model.system_prompts[0]
 
 
+def test_dynamic_candidate_participates_in_real_strands_tool_run():
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/candidates",
+            json={
+                "name": "Quinn Taylor",
+                "role": "Platform Engineer",
+                "stage": "Technical Interview",
+                "stage_entered_at": "2026-09-06T09:00:00Z",
+                "last_candidate_contact_at": "2026-09-07T09:00:00Z",
+                "interview_completed_at": "2026-09-07T08:00:00Z",
+                "required_feedback_count": 4,
+                "submitted_feedback_count": 2,
+            },
+        ).json()
+        candidate_id = created["id"]
+        runner = strands_runner(
+            tool_call("1", "get_active_candidates"),
+            tool_call("2", "get_interview_feedback", {"candidate_id": "cand_sarah"}),
+            tool_call(
+                "3",
+                "send_feedback_reminder",
+                {"candidate_id": "cand_sarah", "interviewer_id": "int_alex"},
+            ),
+            tool_call("4", "get_candidate", {"candidate_id": "cand_david"}),
+            tool_call("5", "send_candidate_status_update", {"candidate_id": "cand_david"}),
+            tool_call("6", "get_interview_feedback", {"candidate_id": "cand_emily"}),
+            tool_call("7", "create_human_decision", {"candidate_id": "cand_emily"}),
+            tool_call("8", "get_candidate", {"candidate_id": "cand_marcus"}),
+            tool_call("9", "record_no_action", {"candidate_id": "cand_marcus"}),
+            tool_call("10", "get_interview_feedback", {"candidate_id": candidate_id}),
+            tool_call(
+                "11",
+                "send_feedback_reminder",
+                {"candidate_id": candidate_id, "interviewer_id": "int_luis"},
+            ),
+            final_response(),
+        )
+
+        result = runner.run()
+
+    assert result.execution_mode == "strands_bedrock"
+    assert result.summary.candidates_scanned == 5
+    assert len(result.actions) == 5
+    dynamic_action = next(item for item in result.actions if item.candidate_id == candidate_id)
+    assert dynamic_action.tool == "send_feedback_reminder"
+    assert len(repository.communications_for(candidate_id)) == 1
+
+
 def test_strands_agent_registers_only_allowlisted_non_judgment_tools():
     runner = strands_runner(final_response())
     adapter = StrandsRecruitingToolAdapter(repository, "run_registry_test")

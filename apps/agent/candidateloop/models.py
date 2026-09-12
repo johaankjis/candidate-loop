@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Stage(StrEnum):
@@ -12,6 +12,14 @@ class Stage(StrEnum):
     PANEL_INTERVIEW = "Panel Interview"
     ON_HOLD = "On Hold"
     CLOSED = "Closed"
+
+
+class CandidateManagementStage(StrEnum):
+    """Stages that generic candidate management may set without workflow authorization."""
+
+    RECRUITER_REVIEW = Stage.RECRUITER_REVIEW
+    TECHNICAL_INTERVIEW = Stage.TECHNICAL_INTERVIEW
+    INTERVIEW_COMPLETE = Stage.INTERVIEW_COMPLETE
 
 
 class DecisionStatus(StrEnum):
@@ -119,6 +127,88 @@ class AgentAction(BaseModel):
 class CandidateView(Candidate):
     days_in_stage: int
     submitted_feedback_count: int
+
+
+class CandidateCreateRequest(BaseModel):
+    """Recruiter-editable candidate workflow fields accepted by the public API."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    role: str = Field(min_length=1, max_length=120)
+    stage: CandidateManagementStage
+    stage_entered_at: AwareDatetime
+    last_candidate_contact_at: AwareDatetime
+    interview_completed_at: AwareDatetime | None = None
+    next_interview_at: AwareDatetime | None = None
+    required_feedback_count: int = Field(default=0, ge=0)
+    submitted_feedback_count: int = Field(default=0, ge=0)
+
+    @field_validator("name", "role")
+    @classmethod
+    def normalize_required_text(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("must not be blank")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_feedback_counts(self):
+        if self.submitted_feedback_count > self.required_feedback_count:
+            raise ValueError("submitted_feedback_count cannot exceed required_feedback_count")
+        return self
+
+
+class CandidateUpdateRequest(BaseModel):
+    """Partial recruiter edit; omitted fields retain their current values."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    role: str | None = Field(default=None, min_length=1, max_length=120)
+    stage: CandidateManagementStage | None = None
+    stage_entered_at: AwareDatetime | None = None
+    last_candidate_contact_at: AwareDatetime | None = None
+    interview_completed_at: AwareDatetime | None = None
+    next_interview_at: AwareDatetime | None = None
+    required_feedback_count: int | None = Field(default=None, ge=0)
+    submitted_feedback_count: int | None = Field(default=None, ge=0)
+
+    @field_validator("name", "role")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            raise ValueError("cannot be null")
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("must not be blank")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_patch(self):
+        non_nullable = {
+            "name",
+            "role",
+            "stage",
+            "stage_entered_at",
+            "last_candidate_contact_at",
+            "required_feedback_count",
+            "submitted_feedback_count",
+        }
+        null_fields = sorted(
+            field for field in self.model_fields_set & non_nullable if getattr(self, field) is None
+        )
+        if null_fields:
+            raise ValueError(f"{', '.join(null_fields)} cannot be null")
+        if (
+            self.required_feedback_count is not None
+            and self.submitted_feedback_count is not None
+            and self.submitted_feedback_count > self.required_feedback_count
+        ):
+            raise ValueError("submitted_feedback_count cannot exceed required_feedback_count")
+        if not self.model_fields_set:
+            raise ValueError("at least one candidate field is required")
+        return self
 
 
 class AgentActionView(AgentAction):

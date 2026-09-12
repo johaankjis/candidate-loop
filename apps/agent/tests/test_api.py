@@ -144,16 +144,16 @@ def test_cors_preflight_retains_narrow_methods_and_headers():
         )
         assert allowed.status_code == 200
         assert allowed.headers["access-control-allow-origin"] == "http://localhost:3000"
-        assert allowed.headers["access-control-allow-methods"] == "GET, POST"
+        assert allowed.headers["access-control-allow-methods"] == "GET, POST, PATCH, DELETE"
         assert "content-type" in allowed.headers["access-control-allow-headers"].lower()
         assert "*" not in allowed.headers["access-control-allow-methods"]
         assert "*" not in allowed.headers["access-control-allow-headers"]
 
-        rejected = client.options(
+        delete_allowed = client.options(
             "/api/agent/run",
             headers={
                 "Origin": "http://localhost:3000",
                 "Access-Control-Request-Method": "DELETE",
             },
         )
-        assert rejected.status_code == 400
+        assert delete_allowed.status_code == 200

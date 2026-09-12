@@ -5,6 +5,8 @@ import { previewCandidates } from './preview';
 import type {
   AgentAction,
   Candidate,
+  CandidateInput,
+  CandidateUpdateInput,
   Decision,
   DecisionResolution,
   RunPhase,
@@ -21,7 +23,9 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
  */
 class ApiUnavailableError extends Error {
   constructor() {
-    super(`Cannot reach the CandidateLoop API at ${API_URL}. Start the backend, then try again.`);
+    super(
+      `Cannot reach the CandidateLoop API at ${API_URL}. Start the backend, then try again.`,
+    );
     this.name = 'ApiUnavailableError';
   }
 }
@@ -38,6 +42,18 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
 function requireOk(response: Response, message: string): Response {
   if (!response.ok) throw new Error(`${message} (HTTP ${response.status})`);
   return response;
+}
+
+async function requireMutationOk(
+  response: Response,
+  message: string,
+): Promise<Response> {
+  if (response.ok) return response;
+  const payload = (await response.json().catch(() => null)) as {
+    detail?: unknown;
+  } | null;
+  const detail = typeof payload?.detail === 'string' ? payload.detail : null;
+  throw new Error(detail ?? `${message} (HTTP ${response.status})`);
 }
 
 /**
@@ -106,7 +122,7 @@ const REVEAL_TAIL_MS = 320;
 
 const RESOLUTIONS: DecisionResolution[] = ['ADVANCE', 'HOLD', 'REJECT'];
 
-export type Busy = 'run' | 'reset' | 'decision' | null;
+export type Busy = 'run' | 'reset' | 'decision' | 'candidate' | null;
 
 function prefersReducedMotion() {
   if (typeof window === 'undefined' || !window.matchMedia) return false;
@@ -133,7 +149,9 @@ export function useCandidateLoop() {
   const [selectedId, setSelectedId] = useState('cand_sarah');
   const [busy, setBusy] = useState<Busy>(null);
   const [phase, setPhase] = useState<RunPhase>('idle');
-  const [statusMessage, setStatusMessage] = useState('Ready to scan candidate workflows.');
+  const [statusMessage, setStatusMessage] = useState(
+    'Ready to scan candidate workflows.',
+  );
   /** Which control last failed, so the console can name it instead of always saying "run". */
   const [failedAction, setFailedAction] = useState<Busy>(null);
   /** Action id → position in the newest run, used only for staggered reveal. */
@@ -151,12 +169,17 @@ export function useCandidateLoop() {
   useEffect(() => clearRevealTimer, [clearRevealTimer]);
 
   const refresh = useCallback(async (): Promise<Snapshot> => {
-    const [candidateResponse, actionResponse, decisionResponse] = await Promise.all([
-      apiFetch('/api/candidates'),
-      apiFetch('/api/actions'),
-      apiFetch('/api/decisions'),
-    ]);
-    for (const response of [candidateResponse, actionResponse, decisionResponse]) {
+    const [candidateResponse, actionResponse, decisionResponse] =
+      await Promise.all([
+        apiFetch('/api/candidates'),
+        apiFetch('/api/actions'),
+        apiFetch('/api/decisions'),
+      ]);
+    for (const response of [
+      candidateResponse,
+      actionResponse,
+      decisionResponse,
+    ]) {
       requireOk(response, 'CandidateLoop state could not be loaded.');
     }
     const snapshot: Snapshot = {
@@ -178,7 +201,8 @@ export function useCandidateLoop() {
         const health = await apiFetch('/health');
         if (health.ok) {
           const body = (await health.json()) as { execution_mode?: string };
-          if (!cancelled && body.execution_mode) setExecutionMode(body.execution_mode);
+          if (!cancelled && body.execution_mode)
+            setExecutionMode(body.execution_mode);
         }
         const snapshot = await refresh();
         if (cancelled) return;
@@ -193,7 +217,9 @@ export function useCandidateLoop() {
       } catch {
         if (cancelled) return;
         setConnected(false);
-        setStatusMessage('Preview data loaded — start the local API to run the agent.');
+        setStatusMessage(
+          'Preview data loaded — start the local API to run the agent.',
+        );
       }
     }
     void connect();
@@ -206,13 +232,18 @@ export function useCandidateLoop() {
    * One place that decides what a failed control says. An unreachable API also
    * clears `connected`, so the header stops claiming a live backend.
    */
-  const reportFailure = useCallback((action: Exclude<Busy, null>, error: unknown) => {
-    if (error instanceof ApiUnavailableError) setConnected(false);
-    setFailedAction(action);
-    setStatusMessage(
-      error instanceof Error ? error.message : 'The request failed. Please try again.',
-    );
-  }, []);
+  const reportFailure = useCallback(
+    (action: Exclude<Busy, null>, error: unknown) => {
+      if (error instanceof ApiUnavailableError) setConnected(false);
+      setFailedAction(action);
+      setStatusMessage(
+        error instanceof Error
+          ? error.message
+          : 'The request failed. Please try again.',
+      );
+    },
+    [],
+  );
 
   const pendingDecisions = useMemo(
     () => decisions.filter((decision) => decision.status === 'pending'),
@@ -220,7 +251,9 @@ export function useCandidateLoop() {
   );
 
   const selected = useMemo(
-    () => candidates.find((candidate) => candidate.id === selectedId) ?? candidates[0],
+    () =>
+      candidates.find((candidate) => candidate.id === selectedId) ??
+      candidates[0],
     [candidates, selectedId],
   );
 
@@ -237,7 +270,8 @@ export function useCandidateLoop() {
       });
       setRevealOrder(order);
 
-      const settled: RunPhase = result.summary.actions_taken === 0 ? 'no_work' : 'complete';
+      const settled: RunPhase =
+        result.summary.actions_taken === 0 ? 'no_work' : 'complete';
       if (prefersReducedMotion() || result.actions.length === 0) {
         setRevealOrder({});
         setPhase(settled);
@@ -245,7 +279,9 @@ export function useCandidateLoop() {
       }
       setPhase('applying');
       const duration =
-        REVEAL_BASE_MS + result.actions.length * REVEAL_STEP_MS + REVEAL_TAIL_MS;
+        REVEAL_BASE_MS +
+        result.actions.length * REVEAL_STEP_MS +
+        REVEAL_TAIL_MS;
       revealTimer.current = setTimeout(() => {
         setPhase(settled);
         // Drop the stagger once it has played so later re-renders (filtering,
@@ -271,7 +307,9 @@ export function useCandidateLoop() {
       const snapshot = await refresh();
 
       // Pull the recruiter straight to whoever now needs them.
-      const pending = snapshot.decisions.find((decision) => decision.status === 'pending');
+      const pending = snapshot.decisions.find(
+        (decision) => decision.status === 'pending',
+      );
       if (pending) setSelectedId(pending.candidate_id);
 
       stageReveal(result);
@@ -314,11 +352,14 @@ export function useCandidateLoop() {
       setBusy('decision');
       setFailedAction(null);
       try {
-        const response = await apiFetch(`/api/decisions/${decisionId}/resolve`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ resolution }),
-        });
+        const response = await apiFetch(
+          `/api/decisions/${decisionId}/resolve`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ resolution }),
+          },
+        );
         requireOk(response, 'The decision could not be recorded.');
         await refresh();
         // Clear a previous failure banner; a run result stays as it was.
@@ -335,6 +376,89 @@ export function useCandidateLoop() {
       }
     },
     [refresh, reportFailure],
+  );
+
+  const createCandidate = useCallback(
+    async (input: CandidateInput) => {
+      setBusy('candidate');
+      try {
+        const response = await apiFetch('/api/candidates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        });
+        await requireMutationOk(response, 'The candidate could not be added.');
+        const candidate = (await response.json()) as Candidate;
+        await refresh();
+        setSelectedId(candidate.id);
+        setStatusMessage(
+          `${candidate.name} added. The next run will inspect this workflow.`,
+        );
+        return candidate;
+      } catch (error) {
+        if (error instanceof ApiUnavailableError) setConnected(false);
+        throw error;
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const updateCandidate = useCallback(
+    async (candidateId: string, input: CandidateUpdateInput) => {
+      setBusy('candidate');
+      try {
+        const response = await apiFetch(`/api/candidates/${candidateId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        });
+        await requireMutationOk(
+          response,
+          'The candidate could not be updated.',
+        );
+        const candidate = (await response.json()) as Candidate;
+        await refresh();
+        setSelectedId(candidate.id);
+        setStatusMessage(`${candidate.name}'s workflow was updated.`);
+        return candidate;
+      } catch (error) {
+        if (error instanceof ApiUnavailableError) setConnected(false);
+        throw error;
+      } finally {
+        setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const deleteCandidate = useCallback(
+    async (candidateId: string) => {
+      setBusy('candidate');
+      try {
+        const candidate = candidates.find((item) => item.id === candidateId);
+        const response = await apiFetch(`/api/candidates/${candidateId}`, {
+          method: 'DELETE',
+        });
+        await requireMutationOk(
+          response,
+          'The candidate could not be removed.',
+        );
+        const snapshot = await refresh();
+        if (selectedId === candidateId)
+          setSelectedId(snapshot.candidates[0]?.id ?? '');
+        setStatusMessage(
+          `${candidate?.name ?? 'Candidate'} removed from active workflows.`,
+        );
+      } catch (error) {
+        if (error instanceof ApiUnavailableError) setConnected(false);
+        throw error;
+      } finally {
+        setBusy(null);
+      }
+    },
+    [candidates, refresh, selectedId],
   );
 
   // Same three visible actions the cockpit exposes, offered to a WebMCP host.
@@ -434,5 +558,8 @@ export function useCandidateLoop() {
     runAgent,
     resetDemo,
     resolveDecision,
+    createCandidate,
+    updateCandidate,
+    deleteCandidate,
   };
 }

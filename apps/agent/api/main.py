@@ -1,7 +1,8 @@
 import os
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from candidateloop.config import (
@@ -10,8 +11,14 @@ from candidateloop.config import (
     AgentExecutionError,
     AgentSettings,
 )
-from candidateloop.models import ResolveDecisionRequest, Stage
-from candidateloop.repository import repository
+from candidateloop.models import (
+    Candidate,
+    CandidateCreateRequest,
+    CandidateUpdateRequest,
+    ResolveDecisionRequest,
+    Stage,
+)
+from candidateloop.repository import PendingHumanDecisionError, repository
 from candidateloop.runner import build_agent_runner
 
 DEFAULT_CORS_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")
@@ -47,7 +54,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins_from_env(),
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
@@ -72,6 +79,91 @@ def get_candidate(candidate_id: str):
     if candidate is None:
         raise HTTPException(status_code=404, detail="Candidate not found")
     return candidate
+
+
+def _candidate_initials(name: str) -> str:
+    parts = name.split()
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return f"{parts[0][0]}{parts[-1][0]}".upper()
+
+
+def _validate_next_interview(next_interview_at, last_human_resolution) -> None:
+    if next_interview_at is not None and last_human_resolution != "ADVANCE":
+        raise HTTPException(
+            status_code=422,
+            detail="next_interview_at requires an explicit human ADVANCE",
+        )
+
+
+@app.post("/api/candidates", status_code=status.HTTP_201_CREATED)
+def create_candidate(request: CandidateCreateRequest):
+    _validate_next_interview(request.next_interview_at, None)
+    candidate_id = f"cand_{uuid4().hex}"
+    candidate = Candidate(
+        id=candidate_id,
+        name=request.name,
+        initials=_candidate_initials(request.name),
+        role=request.role,
+        stage=request.stage,
+        stage_entered_at=request.stage_entered_at,
+        last_candidate_contact_at=request.last_candidate_contact_at,
+        interview_completed_at=request.interview_completed_at,
+        next_interview_at=request.next_interview_at,
+        required_feedback_count=request.required_feedback_count,
+    )
+    repository.create_candidate_with_feedback(
+        candidate,
+        request.required_feedback_count,
+        request.submitted_feedback_count,
+    )
+    return repository.candidate_view(candidate.id)
+
+
+@app.patch("/api/candidates/{candidate_id}")
+def update_candidate(candidate_id: str, request: CandidateUpdateRequest):
+    candidate = repository.candidate(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    current_view = repository.candidate_view(candidate_id)
+    required_count = (
+        request.required_feedback_count
+        if request.required_feedback_count is not None
+        else candidate.required_feedback_count
+    )
+    submitted_count = (
+        request.submitted_feedback_count
+        if request.submitted_feedback_count is not None
+        else current_view.submitted_feedback_count
+    )
+    if submitted_count > required_count:
+        raise HTTPException(
+            status_code=422,
+            detail="submitted_feedback_count cannot exceed required_feedback_count",
+        )
+
+    changes = request.model_dump(exclude_unset=True)
+    changes.pop("submitted_feedback_count", None)
+    if "next_interview_at" in changes:
+        _validate_next_interview(changes["next_interview_at"], candidate.last_human_resolution)
+    for field, value in changes.items():
+        setattr(candidate, field, value)
+    if "name" in changes:
+        candidate.initials = _candidate_initials(candidate.name)
+    repository.update_candidate_with_feedback(candidate, required_count, submitted_count)
+    return repository.candidate_view(candidate.id)
+
+
+@app.delete("/api/candidates/{candidate_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_candidate(candidate_id: str):
+    try:
+        deleted = repository.delete_candidate(candidate_id)
+    except PendingHumanDecisionError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/api/actions")

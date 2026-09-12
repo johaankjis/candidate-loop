@@ -21,8 +21,26 @@ export type Candidate = {
   submitted_feedback_count: number;
 };
 
+export type CandidateInput = {
+  name: string;
+  role: string;
+  stage: string;
+  stage_entered_at: string;
+  last_candidate_contact_at: string;
+  interview_completed_at: string | null;
+  required_feedback_count: number;
+  submitted_feedback_count: number;
+};
+
+export type CandidateUpdateInput = Omit<CandidateInput, 'stage'> & {
+  stage?: string;
+};
+
 /** `tool_action` and `human_decision` change state; `no_action` records a deliberate skip. */
-export type AgentActionEventType = 'tool_action' | 'human_decision' | 'no_action';
+export type AgentActionEventType =
+  | 'tool_action'
+  | 'human_decision'
+  | 'no_action';
 
 export type AgentAction = {
   id: string;
