@@ -1,7 +1,9 @@
 'use client';
 
+import { Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { ActivityFeed } from '@/components/candidateloop/activity-feed';
+import { AgentConsole } from '@/components/candidateloop/agent-console';
 import { CandidateDetail } from '@/components/candidateloop/candidate-detail';
 import {
   CandidateEditorDialog,
@@ -9,7 +11,6 @@ import {
 } from '@/components/candidateloop/candidate-management';
 import { CandidateRail } from '@/components/candidateloop/candidate-rail';
 import { DecisionQueue } from '@/components/candidateloop/decision-queue';
-import { RunConsole } from '@/components/candidateloop/run-console';
 import { Button } from '@/components/ui/button';
 import { CANDIDATE_MANAGEMENT_STAGES } from '@/lib/candidateloop/format';
 import { useCandidateLoop } from '@/lib/candidateloop/use-candidateloop';
@@ -24,6 +25,36 @@ import type { Busy } from '@/lib/candidateloop/use-candidateloop';
 /** The hook surfaces every failure as status text, so handlers only stop propagation. */
 function swallow() {
   return undefined;
+}
+
+function AgentStatus({ connected, busy }: { connected: boolean; busy: Busy }) {
+  const working = busy === 'run';
+  const label = !connected
+    ? 'Agent offline'
+    : working
+      ? 'Agent working'
+      : 'Agent online';
+  const dot = !connected
+    ? 'bg-subtle'
+    : working
+      ? 'cl-pulse bg-agent'
+      : 'bg-success';
+  return (
+    <span
+      className="flex items-center gap-1.5 text-xs text-muted-foreground"
+      title={
+        connected
+          ? 'Connected to the CandidateLoop API'
+          : 'Start the local API to run the agent'
+      }
+    >
+      <span
+        className={`size-1.5 shrink-0 rounded-full ${dot}`}
+        aria-hidden="true"
+      />
+      {label}
+    </span>
+  );
 }
 
 export default function Home() {
@@ -84,80 +115,102 @@ export default function Home() {
 
   const running = loop.busy === 'run';
   const candidateBusy = loop.busy === 'candidate';
-  const hasPendingDecisions = loop.pendingDecisions.length > 0;
+  const selectedId = loop.selected?.id ?? loop.selectedId;
   const selectedActions = loop.selected
     ? loop.actions.filter((action) => action.candidate_id === loop.selected?.id)
     : [];
 
   return (
-    <main className="flex min-h-dvh flex-col bg-background text-foreground xl:h-dvh xl:overflow-hidden">
-      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2 sm:px-5">
-        <div className="mr-auto flex min-w-0 items-baseline gap-2">
-          <span className="shrink-0 text-sm font-semibold tracking-[-0.012em]">
-            CandidateLoop
-          </span>
-          <span className="truncate text-xs text-muted-foreground">
-            Recruiting operations
-          </span>
+    <main className="flex min-h-dvh flex-col bg-background text-foreground lg:h-dvh lg:overflow-hidden">
+      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-card px-4 py-2 sm:px-5">
+        <div className="mr-auto flex min-w-0 items-center gap-2">
+          <Sparkles className="size-4 shrink-0 text-agent" aria-hidden="true" />
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+            <span className="shrink-0 text-sm font-semibold tracking-[-0.012em]">
+              CandidateLoop
+            </span>
+            <span className="truncate text-xs text-muted-foreground">
+              Autonomous recruiting operations
+            </span>
+          </div>
         </div>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleReset}
-          disabled={loop.busy !== null}
-          aria-label="Reset demo to the four-candidate starting state"
-        >
-          {loop.busy === 'reset' ? 'Resetting…' : 'Reset demo'}
-        </Button>
-        <Button size="sm" onClick={handleRun} disabled={loop.busy !== null}>
-          {running ? 'Scanning…' : 'Scan pipeline'}
-        </Button>
+        <AgentStatus connected={loop.connected} busy={loop.busy} />
+
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleReset}
+            disabled={loop.busy !== null}
+            aria-label="Reset demo to the four-candidate starting state"
+          >
+            {loop.busy === 'reset' ? 'Resetting…' : 'Reset demo'}
+          </Button>
+          <Button size="sm" onClick={handleRun} disabled={loop.busy !== null}>
+            <Sparkles aria-hidden="true" />
+            {running ? 'Reviewing…' : 'Run agent'}
+          </Button>
+        </div>
       </header>
 
-      <RunConsole
-        phase={loop.phase}
-        summary={loop.summary}
-        failedAction={loop.failedAction}
-        statusMessage={loop.statusMessage}
-        onRetry={handleRetry}
-        retryDisabled={loop.busy !== null}
-      />
+      <div className="cl-shell min-h-0 flex-1">
+        <div data-area="rail" className="flex min-h-0 flex-col">
+          <CandidateRail
+            candidates={loop.candidates}
+            selectedId={selectedId}
+            onSelect={loop.setSelectedId}
+            onAdd={handleAddCandidate}
+            disabled={loop.busy !== null}
+          />
+        </div>
 
-      <div
-        className={`grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[258px_minmax(0,1fr)] xl:overflow-hidden ${
-          hasPendingDecisions
-            ? 'xl:grid-cols-[258px_minmax(400px,1fr)_336px]'
-            : 'xl:grid-cols-[258px_minmax(400px,1fr)_186px]'
-        }`}
-      >
-        <CandidateRail
-          candidates={loop.candidates}
-          selectedId={loop.selected?.id ?? loop.selectedId}
-          onSelect={loop.setSelectedId}
-          onAdd={handleAddCandidate}
-          disabled={loop.busy !== null}
-        />
-
-        <section className="min-w-0 bg-card xl:min-h-0 xl:overflow-y-auto">
+        <section data-area="detail" className="min-w-0 bg-card">
           <CandidateDetail
             candidate={loop.selected}
             onEdit={handleEditCandidate}
             onRemove={handleRemoveCandidate}
             disabled={loop.busy !== null}
           />
+        </section>
+
+        <section
+          data-area="activity"
+          className="min-h-0 min-w-0 bg-card lg:overflow-y-auto"
+        >
           <ActivityFeed
             actions={selectedActions}
             revealOrder={loop.revealOrder}
           />
         </section>
 
-        <div className="border-t border-border lg:col-span-2 xl:col-span-1 xl:min-h-0 xl:border-l xl:border-t-0 xl:overflow-y-auto">
+        <div
+          data-area="control"
+          className="min-h-0 border-t border-border lg:border-l lg:border-t-0 lg:overflow-y-auto"
+        >
+          <AgentConsole
+            phase={loop.phase}
+            summary={loop.summary}
+            lastRunActions={loop.lastRunActions}
+            candidates={loop.candidates}
+            revealOrder={loop.revealOrder}
+            selectedId={selectedId}
+            pendingDecisions={loop.pendingDecisions.length}
+            connected={loop.connected}
+            busy={loop.busy}
+            failedAction={loop.failedAction}
+            statusMessage={loop.statusMessage}
+            onRun={handleRun}
+            onRetry={handleRetry}
+            onSelectCandidate={loop.setSelectedId}
+          />
           <DecisionQueue
             decisions={loop.decisions}
             candidates={loop.candidates}
+            selectedId={selectedId}
             busy={loop.busy !== null}
             onResolve={handleResolve}
+            onSelectCandidate={loop.setSelectedId}
           />
         </div>
       </div>

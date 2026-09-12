@@ -69,15 +69,18 @@ const WRITE_TOOL_COUNTERS: Partial<Record<string, keyof RunSummary>> = {
 };
 
 /**
- * Rebuilds the newest run's counters from the persisted action feed, so a page
- * reload does not present a finished demo as an untouched Idle console.
+ * Rebuilds the newest run's counters and event list from the persisted action
+ * feed, so a page reload does not present a finished demo as an untouched Idle
+ * console.
  *
  * Counts only what the events themselves state — every candidate scanned in a
  * run gets exactly one event, so the run is fully described by its own records.
  * No text is interpreted, no record is synthesised, and no hiring outcome is
  * inferred. Returns null when nothing has run yet.
  */
-function summariseNewestRun(actions: AgentAction[]): RunSummary | null {
+function summariseNewestRun(
+  actions: AgentAction[],
+): { summary: RunSummary; actions: AgentAction[] } | null {
   const newest = actions[0];
   if (!newest) return null;
   const run = actions.filter((action) => action.run_id === newest.run_id);
@@ -103,7 +106,7 @@ function summariseNewestRun(actions: AgentAction[]): RunSummary | null {
     const counter = WRITE_TOOL_COUNTERS[action.tool];
     if (counter) summary[counter] += 1;
   }
-  return summary;
+  return { summary, actions: run };
 }
 
 /** One wording for a settled run, shared by the live run and by rehydration. */
@@ -144,6 +147,11 @@ export function useCandidateLoop() {
   const [actions, setActions] = useState<AgentAction[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [summary, setSummary] = useState<RunSummary | null>(null);
+  /**
+   * The newest run's own events, exactly as the API returned or persisted
+   * them, so the agent console can list what happened per candidate.
+   */
+  const [lastRunActions, setLastRunActions] = useState<AgentAction[]>([]);
   const [executionMode, setExecutionMode] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [selectedId, setSelectedId] = useState('cand_sarah');
@@ -210,9 +218,12 @@ export function useCandidateLoop() {
         // restore the newest run's console state from the events themselves.
         const restored = summariseNewestRun(snapshot.actions);
         if (restored) {
-          setSummary(restored);
-          setPhase(restored.actions_taken === 0 ? 'no_work' : 'complete');
-          setStatusMessage(describeRun(restored));
+          setSummary(restored.summary);
+          setLastRunActions(restored.actions);
+          setPhase(
+            restored.summary.actions_taken === 0 ? 'no_work' : 'complete',
+          );
+          setStatusMessage(describeRun(restored.summary));
         }
       } catch {
         if (cancelled) return;
@@ -303,6 +314,7 @@ export function useCandidateLoop() {
       requireOk(response, 'The agent run could not be started.');
       const result = (await response.json()) as RunResult;
       setSummary(result.summary);
+      setLastRunActions(result.actions);
       setExecutionMode(result.execution_mode);
       const snapshot = await refresh();
 
@@ -333,6 +345,7 @@ export function useCandidateLoop() {
       requireOk(response, 'Demo state could not be reset.');
       clearRevealTimer();
       setSummary(null);
+      setLastRunActions([]);
       setRevealOrder({});
       setPhase('idle');
       await refresh();
@@ -545,6 +558,7 @@ export function useCandidateLoop() {
     decisions,
     pendingDecisions,
     summary,
+    lastRunActions,
     executionMode,
     connected,
     selected,

@@ -123,18 +123,18 @@ export function stageIndex(stage: string) {
 export function stageTone(stage: string) {
   switch (stage) {
     case 'Interview Complete':
-      return 'border-violet-200 bg-violet-50 text-violet-700';
+      return 'border-agent/30 bg-agent/10 text-agent';
     case 'Recruiter Review':
-      return 'border-amber-200 bg-amber-50 text-amber-700';
+      return 'border-waiting/30 bg-waiting/10 text-waiting';
     case 'Panel Scheduling':
-      return 'border-indigo-200 bg-indigo-50 text-indigo-700';
+      return 'border-agent/30 bg-agent/10 text-agent';
     case 'Panel Interview':
-      return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+      return 'border-success/30 bg-success/10 text-success';
     case 'On Hold':
     case 'Closed':
-      return 'border-slate-200 bg-slate-100 text-slate-600';
+      return 'border-border bg-muted text-muted-foreground';
     default:
-      return 'border-sky-200 bg-sky-50 text-sky-700';
+      return 'border-border bg-muted text-foreground';
   }
 }
 
@@ -171,8 +171,8 @@ export function candidateSignal(candidate: Candidate): CandidateSignal {
       priority: 0,
       label: 'Needs your decision',
       detail: 'Evidence complete — waiting on a recruiter',
-      dot: 'bg-violet-500',
-      chip: 'border-violet-200 bg-violet-50 text-violet-700',
+      dot: 'bg-agent',
+      chip: 'border-agent/30 bg-agent/10 text-agent',
     };
   }
   if (candidate.status === 'closed') {
@@ -181,8 +181,8 @@ export function candidateSignal(candidate: Candidate): CandidateSignal {
       priority: 5,
       label: 'Closed',
       detail: 'Closed by a recruiter decision',
-      dot: 'bg-slate-400',
-      chip: 'border-slate-200 bg-slate-100 text-slate-600',
+      dot: 'bg-subtle',
+      chip: 'border-border bg-muted text-muted-foreground',
     };
   }
   if (candidate.stage === 'On Hold') {
@@ -191,8 +191,8 @@ export function candidateSignal(candidate: Candidate): CandidateSignal {
       priority: 4,
       label: 'On hold',
       detail: 'Held by a recruiter decision',
-      dot: 'bg-slate-400',
-      chip: 'border-slate-200 bg-slate-100 text-slate-600',
+      dot: 'bg-subtle',
+      chip: 'border-border bg-muted text-muted-foreground',
     };
   }
   if (candidate.stage === 'Panel Scheduling') {
@@ -201,8 +201,8 @@ export function candidateSignal(candidate: Candidate): CandidateSignal {
       priority: 1,
       label: 'Ready to schedule',
       detail: 'Advanced by a recruiter — panel scheduling is unlocked',
-      dot: 'bg-indigo-500',
-      chip: 'border-indigo-200 bg-indigo-50 text-indigo-700',
+      dot: 'bg-agent',
+      chip: 'border-agent/30 bg-agent/10 text-agent',
     };
   }
   if (candidate.interview_completed_at && missingFeedback > 0) {
@@ -211,8 +211,8 @@ export function candidateSignal(candidate: Candidate): CandidateSignal {
       priority: 2,
       label: `Waiting on ${missingFeedback} scorecard${missingFeedback === 1 ? '' : 's'}`,
       detail: 'Blocked until required interview feedback arrives',
-      dot: 'bg-amber-500',
-      chip: 'border-amber-200 bg-amber-50 text-amber-700',
+      dot: 'bg-waiting',
+      chip: 'border-waiting/30 bg-waiting/10 text-waiting',
     };
   }
   if (candidate.next_interview_at) {
@@ -221,8 +221,8 @@ export function candidateSignal(candidate: Candidate): CandidateSignal {
       priority: 3,
       label: 'Interview scheduled',
       detail: `Next interview ${formatDayTime(candidate.next_interview_at)} UTC`,
-      dot: 'bg-emerald-500',
-      chip: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+      dot: 'bg-success',
+      chip: 'border-success/30 bg-success/10 text-success',
     };
   }
   return {
@@ -230,15 +230,15 @@ export function candidateSignal(candidate: Candidate): CandidateSignal {
     priority: 3,
     label: 'On track',
     detail: 'No coordination is currently due',
-    dot: 'bg-slate-300',
-    chip: 'border-slate-200 bg-slate-100 text-slate-600',
+    dot: 'bg-subtle',
+    chip: 'border-border bg-muted text-muted-foreground',
   };
 }
 
 /** Waiting time escalates visually so a stalled candidate is obvious at a glance. */
 export function waitTone(days: number) {
-  if (days >= 5) return 'font-medium text-amber-700';
-  if (days >= 3) return 'text-amber-600';
+  if (days >= 5) return 'font-medium text-waiting';
+  if (days >= 3) return 'text-waiting/80';
   return 'text-muted-foreground';
 }
 

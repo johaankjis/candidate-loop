@@ -207,3 +207,26 @@ This file records handoffs between Claude Code, Codex, Antigravity, and the huma
 ### Important assumptions
 
 - The prototype supplies presentation only; all workflow state, actions, decisions, and candidate mutations continue to come from the existing hook and FastAPI backend.
+
+## 2026-09-12 — CLAUDE — Dark Agent-Visible Workspace
+
+### Completed
+
+- Converted the cockpit to a single committed dark operations theme with semantic accents (agent, waiting, success, danger) and fixed the sans font being applied above the element that defines it.
+- Added an agent console in the control rail built strictly on `POST /api/agent/run`: fixed supported instruction, live "reviewing N active candidates" state with a measured timer, and a post-run report from the real summary counts and returned events with per-candidate navigation.
+- Reframed Human Decisions around "CandidateLoop paused here" with Advance/Hold/Reject unchanged, plus a resolved-by-you history from real decision records.
+- Reordered narrow layouts to candidate → agent → decisions → activity via grid areas; the candidate rail becomes a horizontal strip below `lg`.
+
+### Files changed
+
+- `apps/web/app/{globals.css,layout.tsx,page.tsx}`, `apps/web/components/candidateloop/*`, `apps/web/lib/candidateloop/{format.ts,use-candidateloop.ts}`; `run-console.tsx` replaced by `agent-console.tsx`.
+
+### Tests run
+
+- `oxfmt --check`, `oxlint`, `tsc --noEmit`, and `npm run build` — pass.
+- Browser QA against the local API: full demo path (run → Advance → schedule → duplicate-safe rerun), candidate add/edit/remove, reset, reload rehydration, failure/retry, 1440px and 390px layouts, no internal ids or provider strings in the DOM.
+
+### Known issues
+
+- The console cannot accept free-form instructions because the backend exposes no conversational endpoint; it echoes the one supported instruction instead.
+- Backend untouched; no HANDOFF changes to safety, scheduling, or decision semantics.

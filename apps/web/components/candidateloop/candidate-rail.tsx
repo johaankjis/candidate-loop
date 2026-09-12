@@ -19,6 +19,8 @@ export function CandidateRail({
   onAdd: () => void;
   disabled: boolean;
 }) {
+  // Anything needing a human floats to the top; ties fall back to who has
+  // waited longest. Order can therefore change after a run — by design.
   const ordered = useMemo(
     () =>
       [...candidates]
@@ -32,12 +34,15 @@ export function CandidateRail({
   );
 
   return (
-    <aside className="flex min-h-0 flex-col border-r border-border bg-card">
+    <aside
+      className="flex min-h-0 flex-1 flex-col border-b border-border bg-card lg:border-b-0 lg:border-r"
+      aria-label="Candidates"
+    >
       <div className="flex min-h-10 shrink-0 items-center border-b border-border px-3.5 py-2">
         <h2 className="text-xs font-semibold uppercase tracking-[0.07em] text-muted-foreground">
           Candidates
         </h2>
-        <span className="ml-2 text-xs tabular-nums text-muted-foreground">
+        <span className="ml-2 text-xs tabular-nums text-subtle">
           {candidates.length}
         </span>
         <Button
@@ -47,11 +52,13 @@ export function CandidateRail({
           disabled={disabled}
           className="ml-auto px-2 font-normal text-muted-foreground"
         >
-          <Plus aria-hidden="true" /> Add candidate
+          <Plus aria-hidden="true" /> Add
         </Button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {/* Below lg the rail is a horizontal strip so the selected candidate and
+          the agent stay above the fold; from lg it is the usual vertical list. */}
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-hidden lg:block lg:overflow-x-hidden lg:overflow-y-auto">
         {ordered.map(({ candidate, signal }) => {
           const isSelected = candidate.id === selectedId;
           return (
@@ -60,10 +67,10 @@ export function CandidateRail({
               key={candidate.id}
               onClick={() => onSelect(candidate.id)}
               aria-current={isSelected ? 'true' : undefined}
-              className={`relative grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-2 border-b border-border/60 px-3.5 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60 ${
+              className={`relative grid w-44 shrink-0 grid-cols-[minmax(0,1fr)_auto] gap-x-2 border-r border-border/70 px-3.5 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60 lg:w-full lg:border-b lg:border-r-0 ${
                 isSelected
-                  ? 'bg-secondary shadow-[inset_2px_0_0_var(--foreground)]'
-                  : 'hover:bg-muted/70'
+                  ? 'bg-surface-2 shadow-[inset_0_-2px_0_var(--agent)] lg:shadow-[inset_2px_0_0_var(--agent)]'
+                  : 'hover:bg-surface-hover/70'
               }`}
             >
               <span
@@ -71,10 +78,10 @@ export function CandidateRail({
               >
                 {candidate.name}
               </span>
-              <span className="whitespace-nowrap text-xs text-muted-foreground">
+              <span className="hidden whitespace-nowrap text-xs text-subtle lg:inline">
                 {candidate.stage}
               </span>
-              <span className="truncate text-xs text-muted-foreground">
+              <span className="col-span-2 truncate text-xs text-muted-foreground lg:col-span-1">
                 {candidate.role}
               </span>
               <span className="col-span-2 mt-1 flex min-w-0 items-center gap-1.5">
@@ -84,9 +91,11 @@ export function CandidateRail({
                 />
                 <span
                   className={`truncate text-xs ${
-                    signal.key === 'decision' || signal.key === 'feedback'
-                      ? 'font-medium text-amber-800'
-                      : 'text-muted-foreground'
+                    signal.key === 'decision'
+                      ? 'font-medium text-agent'
+                      : signal.key === 'feedback'
+                        ? 'font-medium text-waiting'
+                        : 'text-muted-foreground'
                   }`}
                 >
                   {signal.label}
