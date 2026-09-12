@@ -11,6 +11,8 @@ FEEDBACK_REMINDER_COOLDOWN_HOURS = 24
 DEMO_NOW = datetime(2026, 9, 8, 16, 0, tzinfo=UTC)
 
 ExecutionMode = Literal["deterministic_local", "strands"]
+SUPPORTED_MODEL_PROVIDERS: tuple[str, ...] = ("bedrock", "openrouter")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 class AgentConfigurationError(ValueError):
@@ -29,6 +31,7 @@ class AgentSettings:
     model_provider: str = "bedrock"
     model_id: str | None = None
     aws_region: str | None = None
+    openrouter_api_key: str | None = None
 
     @classmethod
     def from_env(cls) -> "AgentSettings":
@@ -42,16 +45,32 @@ class AgentSettings:
             model_provider=os.getenv("CANDIDATELOOP_MODEL_PROVIDER", "bedrock").strip().lower(),
             model_id=os.getenv("CANDIDATELOOP_MODEL_ID") or None,
             aws_region=os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or None,
+            openrouter_api_key=os.getenv("OPENROUTER_API_KEY") or None,
         )
-        if settings.execution_mode == "strands" and settings.model_provider != "bedrock":
+        if settings.execution_mode == "strands":
+            settings.validate_provider()
+        return settings
+
+    def validate_provider(self) -> None:
+        """Fail fast when the selected provider cannot be constructed from these settings.
+
+        Provider credentials are only demanded for the provider actually in use, so
+        deterministic_local and strands+bedrock never require OPENROUTER_API_KEY and
+        strands+openrouter never requires AWS settings.
+        """
+        if self.model_provider not in SUPPORTED_MODEL_PROVIDERS:
+            supported = ", ".join(f"'{name}'" for name in SUPPORTED_MODEL_PROVIDERS)
             raise AgentConfigurationError(
-                "CANDIDATELOOP_MODEL_PROVIDER currently supports only 'bedrock'"
+                f"CANDIDATELOOP_MODEL_PROVIDER must be one of {supported}"
             )
-        if settings.execution_mode == "strands" and not settings.model_id:
+        if not self.model_id:
             raise AgentConfigurationError(
                 "CANDIDATELOOP_MODEL_ID is required when CANDIDATELOOP_EXECUTION_MODE=strands"
             )
-        return settings
+        if self.model_provider == "openrouter" and not self.openrouter_api_key:
+            raise AgentConfigurationError(
+                "OPENROUTER_API_KEY is required when CANDIDATELOOP_MODEL_PROVIDER=openrouter"
+            )
 
     @property
     def reported_execution_mode(self) -> str:

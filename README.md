@@ -7,9 +7,10 @@ updates, schedules approved next steps, and stops when recruiter judgment is req
 ## Current milestone
 
 The repository includes a complete local deterministic workflow, operations cockpit, and a real
-Strands Agents SDK execution path for Amazon Bedrock. `deterministic_local` remains the explicit
-default for reproducible local development, tests, and demos; setting the documented runtime
-environment switches to `strands_bedrock` without silently falling back after a model failure.
+Strands Agents SDK execution path for Amazon Bedrock or OpenRouter. `deterministic_local` remains
+the explicit default for reproducible local development, tests, and demos; setting the documented
+runtime environment switches to `strands_bedrock` or `strands_openrouter` without silently falling
+back after a model failure.
 
 Hiring decisions are structurally separated: the operational tool surface has no Advance, Hold,
 Reject, hire, rank, or score function. A recruiter resolves a decision through the human-facing

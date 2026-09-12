@@ -35,6 +35,25 @@ The command never substitutes deterministic execution. A Bedrock permission/mode
 incomplete agent pass exits nonzero, and partial in-memory changes are rolled back. The API follows
 the same behavior and reports a failed Strands pass as an error.
 
+## Live OpenRouter smoke test
+
+OpenRouter is an alternate model provider for the same Strands agent. It runs through the Strands
+OpenAI provider (`strands.models.openai.OpenAIModel`) pointed at `https://openrouter.ai/api/v1`;
+the tool allowlist, human decision boundary, and rollback behavior are unchanged. No AWS settings
+are required. From `apps/agent`, run:
+
+```bash
+export CANDIDATELOOP_EXECUTION_MODE=strands
+export CANDIDATELOOP_MODEL_PROVIDER=openrouter
+export CANDIDATELOOP_MODEL_ID=openai/gpt-4o-mini
+export OPENROUTER_API_KEY=<your key>
+.venv/bin/python scripts/openrouter_smoke.py
+```
+
+`OPENROUTER_API_KEY` is only required when `CANDIDATELOOP_MODEL_PROVIDER=openrouter`; the
+deterministic and Bedrock paths ignore it. The configured model must support tool calling. The
+health endpoint reports `strands_openrouter` for this configuration.
+
 Run the local checks without making any model-provider calls:
 
 ```bash

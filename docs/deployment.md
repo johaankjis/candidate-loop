@@ -33,6 +33,10 @@ CANDIDATELOOP_MODEL_ID=us.amazon.nova-lite-v1:0
 ```
 *Note: Do not commit actual AWS access keys. Use IAM Roles (e.g., ECS Task Roles) in production.*
 
+*OpenRouter is an alternate provider for the same Strands runtime: set
+`CANDIDATELOOP_MODEL_PROVIDER=openrouter`, an OpenRouter `CANDIDATELOOP_MODEL_ID`, and
+`OPENROUTER_API_KEY` instead of `AWS_REGION`. See `apps/agent/README.md`.*
+
 ### Frontend Environment Variables
 The frontend needs to know where the backend API is hosted:
 
