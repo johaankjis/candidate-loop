@@ -2,7 +2,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
-from candidateloop.config import AgentExecutionError, AgentSettings
+from candidateloop.config import (
+    OPENROUTER_BASE_URL,
+    AgentConfigurationError,
+    AgentExecutionError,
+    AgentSettings,
+)
 from candidateloop.repository import repository
 from candidateloop.runner import DeterministicAgentRunner
 from candidateloop.strands_runner import StrandsAgentRunner
@@ -20,6 +25,16 @@ def strands_runner(*responses):
         execution_mode="strands",
         model_provider="bedrock",
         model_id="scripted-test-model",
+    )
+    return StrandsAgentRunner(repository, settings, ScriptedModel(responses))
+
+
+def openrouter_runner(*responses):
+    settings = AgentSettings(
+        execution_mode="strands",
+        model_provider="openrouter",
+        model_id="scripted-test-model",
+        openrouter_api_key="test-openrouter-key",
     )
     return StrandsAgentRunner(repository, settings, ScriptedModel(responses))
 
@@ -135,6 +150,129 @@ def test_bedrock_model_uses_configured_model_and_region_without_invocation():
 
     assert model.get_config()["model_id"] == "us.amazon.nova-lite-v1:0"
     assert model.client.meta.region_name == "us-east-1"
+
+
+def test_openrouter_strands_loop_reports_openrouter_and_keeps_safe_actions():
+    runner = openrouter_runner(*safe_seeded_pass("openrouter_"))
+
+    result = runner.run()
+
+    assert result.execution_mode == "strands_openrouter"
+    assert result.summary.candidates_scanned == 4
+    assert result.summary.actions_taken == 3
+    assert result.summary.interviews_scheduled == 0
+    assert repository.candidate("cand_emily").human_decision_status == "pending"
+    assert repository.communications_for("cand_marcus") == []
+    assert {spec["name"] for spec in runner.model.tool_specs_history[0]} == STRANDS_TOOL_NAMES
+
+
+def test_openrouter_model_uses_strands_openai_provider_with_openrouter_base_url(monkeypatch):
+    for name in ("AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE", "AWS_ACCESS_KEY_ID"):
+        monkeypatch.delenv(name, raising=False)
+    settings = AgentSettings(
+        execution_mode="strands",
+        model_provider="openrouter",
+        model_id="openai/gpt-4o-mini",
+        openrouter_api_key="test-openrouter-key",
+    )
+
+    model = StrandsAgentRunner(repository, settings).build_model()
+
+    from strands.models.openai import OpenAIModel
+
+    assert isinstance(model, OpenAIModel)
+    assert model.get_config()["model_id"] == "openai/gpt-4o-mini"
+    assert model.get_config()["params"] == {"temperature": 0}
+    assert model.client_args == {
+        "api_key": "test-openrouter-key",
+        "base_url": OPENROUTER_BASE_URL,
+    }
+    assert OPENROUTER_BASE_URL == "https://openrouter.ai/api/v1"
+
+
+def test_model_factory_passes_openrouter_settings_to_openai_model(monkeypatch):
+    captured: dict = {}
+
+    class FakeOpenAIModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("strands.models.openai.OpenAIModel", FakeOpenAIModel)
+    settings = AgentSettings(
+        execution_mode="strands",
+        model_provider="openrouter",
+        model_id="anthropic/claude-3.5-haiku",
+        openrouter_api_key="test-openrouter-key",
+    )
+
+    model = StrandsAgentRunner(repository, settings).build_model()
+
+    assert isinstance(model, FakeOpenAIModel)
+    assert captured["model_id"] == "anthropic/claude-3.5-haiku"
+    assert captured["client_args"]["base_url"] == OPENROUTER_BASE_URL
+    assert captured["client_args"]["api_key"] == "test-openrouter-key"
+
+
+def test_model_factory_dispatches_bedrock_without_openrouter_credentials():
+    settings = AgentSettings(
+        execution_mode="strands",
+        model_provider="bedrock",
+        model_id="us.amazon.nova-lite-v1:0",
+        aws_region="us-east-1",
+    )
+
+    model = StrandsAgentRunner(repository, settings).build_model()
+
+    from strands.models import BedrockModel
+
+    assert isinstance(model, BedrockModel)
+    assert model.get_config()["model_id"] == "us.amazon.nova-lite-v1:0"
+
+
+def test_model_factory_requires_openrouter_api_key():
+    settings = AgentSettings(
+        execution_mode="strands",
+        model_provider="openrouter",
+        model_id="openai/gpt-4o-mini",
+    )
+
+    with pytest.raises(AgentConfigurationError, match="OPENROUTER_API_KEY"):
+        StrandsAgentRunner(repository, settings).build_model()
+
+
+def test_model_factory_requires_openrouter_model_id():
+    settings = AgentSettings(
+        execution_mode="strands",
+        model_provider="openrouter",
+        openrouter_api_key="test-openrouter-key",
+    )
+
+    with pytest.raises(AgentConfigurationError, match="CANDIDATELOOP_MODEL_ID"):
+        StrandsAgentRunner(repository, settings).build_model()
+
+
+def test_model_factory_rejects_unsupported_provider():
+    settings = AgentSettings(
+        execution_mode="strands",
+        model_provider="unsupported",
+        model_id="some-model",
+    )
+
+    with pytest.raises(AgentConfigurationError, match="must be one of 'bedrock', 'openrouter'"):
+        StrandsAgentRunner(repository, settings).build_model()
+
+
+def test_unsupported_provider_run_rolls_back_before_any_model_call():
+    settings = AgentSettings(
+        execution_mode="strands",
+        model_provider="unsupported",
+        model_id="some-model",
+    )
+
+    with pytest.raises(AgentConfigurationError):
+        StrandsAgentRunner(repository, settings).run()
+
+    assert repository.actions == {}
 
 
 def test_strands_feedback_view_excludes_candidate_quality_evidence():
@@ -291,6 +429,33 @@ def test_api_executes_the_real_strands_loop(monkeypatch):
     assert response.json()["execution_mode"] == "strands_bedrock"
     assert response.json()["summary"]["actions_taken"] == 3
     assert len(runner.model.tool_specs_history) == 10
+
+
+def test_api_health_reports_strands_openrouter(monkeypatch):
+    for name in ("AWS_REGION", "AWS_DEFAULT_REGION"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("CANDIDATELOOP_EXECUTION_MODE", "strands")
+    monkeypatch.setenv("CANDIDATELOOP_MODEL_PROVIDER", "openrouter")
+    monkeypatch.setenv("CANDIDATELOOP_MODEL_ID", "openai/gpt-4o-mini")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["execution_mode"] == "strands_openrouter"
+
+
+def test_api_executes_openrouter_strands_loop(monkeypatch):
+    runner = openrouter_runner(*safe_seeded_pass("api_openrouter_"))
+    monkeypatch.setattr("api.main.build_agent_runner", lambda _: runner)
+
+    with TestClient(app) as client:
+        response = client.post("/api/agent/run")
+
+    assert response.status_code == 200
+    assert response.json()["execution_mode"] == "strands_openrouter"
+    assert response.json()["summary"]["actions_taken"] == 3
 
 
 def test_api_reports_incomplete_strands_run_without_fallback(monkeypatch):
