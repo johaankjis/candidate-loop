@@ -12,8 +12,11 @@ from candidateloop.repository import repository
 from candidateloop.runner import DeterministicAgentRunner
 from candidateloop.strands_runner import StrandsAgentRunner
 from candidateloop.strands_tools import (
+    ALREADY_HANDLED_REASON,
     FORBIDDEN_AGENT_TOOL_TERMS,
+    INSPECTION_TOOL_NAMES,
     STRANDS_TOOL_NAMES,
+    TERMINAL_TOOL_NAMES,
     StrandsRecruitingToolAdapter,
 )
 from candidateloop.tools import SAFE_CANDIDATE_STATUS_BODY
@@ -321,7 +324,9 @@ def test_strands_parallel_duplicate_calls_create_one_operational_write():
     ]
     assert len(reminders) == 1
     assert result.summary.reminders_sent == 1
-    assert result.summary.no_action_needed == 2
+    assert result.summary.no_action_needed == 1
+    assert len([a for a in result.actions if a.candidate_id == "cand_sarah"]) == 1
+    assert len(result.actions) == result.summary.candidates_scanned == 4
 
 
 def test_repeated_strands_runs_prevent_all_duplicate_operational_writes():
@@ -514,3 +519,248 @@ def test_strands_schedules_only_after_advance_through_human_api():
         assert result.summary.interviews_scheduled == 1
         assert repository.candidate("cand_emily").stage == "Panel Interview"
         assert repository.candidate("cand_emily").next_interview_at is not None
+
+
+# --- One terminal outcome per candidate per run -------------------------------------------
+
+
+def run_actions_by_candidate(run_id: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for action in repository.actions.values():
+        if action.run_id == run_id:
+            counts[action.candidate_id] = counts.get(action.candidate_id, 0) + 1
+    return counts
+
+
+def tool_payload(result) -> str:
+    return result["content"][0]["text"]
+
+
+def build_agent_for(run_id: str):
+    runner = strands_runner(final_response())
+    adapter = StrandsRecruitingToolAdapter(repository, run_id)
+    agent = runner.build_agent(adapter)
+    agent.tool.get_active_candidates()
+    return agent, adapter
+
+
+def test_tool_partition_covers_the_full_allowlist():
+    assert INSPECTION_TOOL_NAMES | TERMINAL_TOOL_NAMES == STRANDS_TOOL_NAMES
+    assert not INSPECTION_TOOL_NAMES & TERMINAL_TOOL_NAMES
+
+
+def test_live_regression_duplicate_no_action_calls_yield_one_terminal_event_each():
+    # Reproduces the homelab run: after the deterministic pass handled the seeded work, the
+    # model recorded no_action twice for David and twice for Emily (6 no-action events).
+    DeterministicAgentRunner(repository).run()
+    runner = strands_runner(
+        tool_call("1", "get_active_candidates"),
+        tool_call("2", "get_interview_feedback", {"candidate_id": "cand_sarah"}),
+        tool_call(
+            "3",
+            "send_feedback_reminder",
+            {"candidate_id": "cand_sarah", "interviewer_id": "int_alex"},
+        ),
+        tool_call("4", "get_candidate", {"candidate_id": "cand_david"}),
+        tool_call("5", "record_no_action", {"candidate_id": "cand_david"}),
+        tool_call("6", "record_no_action", {"candidate_id": "cand_david"}),
+        tool_call("7", "get_interview_feedback", {"candidate_id": "cand_emily"}),
+        tool_call("8", "record_no_action", {"candidate_id": "cand_emily"}),
+        tool_call("9", "get_candidate", {"candidate_id": "cand_emily"}),
+        tool_call("10", "record_no_action", {"candidate_id": "cand_emily"}),
+        tool_call("11", "record_no_action", {"candidate_id": "cand_marcus"}),
+        final_response(),
+    )
+
+    result = runner.run()
+
+    assert result.summary.candidates_scanned == 4
+    assert result.summary.actions_taken == 0
+    assert result.summary.no_action_needed == 4
+    assert len(result.actions) == 4
+    assert run_actions_by_candidate(result.run_id) == {
+        "cand_sarah": 1,
+        "cand_david": 1,
+        "cand_emily": 1,
+        "cand_marcus": 1,
+    }
+    assert all(action.event_type == "no_action" for action in result.actions)
+
+
+def test_redundant_record_no_action_returns_already_handled_without_writes():
+    DeterministicAgentRunner(repository).run()
+    agent, adapter = build_agent_for("run_dup_no_action")
+    action_count = len(repository.actions)
+
+    first = agent.tool.record_no_action(candidate_id="cand_david")
+    second = agent.tool.record_no_action(candidate_id="cand_david")
+
+    assert first["status"] == "success"
+    assert "recorded" in tool_payload(first)
+    assert second["status"] == "success"
+    assert "already_handled" in tool_payload(second)
+    assert ALREADY_HANDLED_REASON in tool_payload(second)
+    assert adapter.summary.no_action_needed == 1
+    assert len(repository.actions) == action_count + 1
+    assert run_actions_by_candidate("run_dup_no_action") == {"cand_david": 1}
+
+
+def test_redundant_send_feedback_reminder_creates_one_write_and_one_counter():
+    agent, adapter = build_agent_for("run_dup_reminder")
+
+    first = agent.tool.send_feedback_reminder(candidate_id="cand_sarah", interviewer_id="int_alex")
+    second = agent.tool.send_feedback_reminder(candidate_id="cand_sarah", interviewer_id="int_alex")
+
+    assert "sent" in tool_payload(first)
+    assert "already_handled" in tool_payload(second)
+    reminders = [
+        item for item in repository.communications.values() if item.type == "feedback_reminder"
+    ]
+    assert len(reminders) == 1
+    assert adapter.summary.reminders_sent == 1
+    assert adapter.summary.actions_taken == 1
+    assert adapter.summary.no_action_needed == 0
+    assert run_actions_by_candidate("run_dup_reminder") == {"cand_sarah": 1}
+
+
+def test_redundant_send_candidate_status_update_creates_one_write_and_one_counter():
+    agent, adapter = build_agent_for("run_dup_status")
+
+    first = agent.tool.send_candidate_status_update(candidate_id="cand_david")
+    second = agent.tool.send_candidate_status_update(candidate_id="cand_david")
+
+    assert "sent" in tool_payload(first)
+    assert "already_handled" in tool_payload(second)
+    updates = [
+        item
+        for item in repository.communications_for("cand_david")
+        if item.type == "candidate_status_update"
+    ]
+    assert len(updates) == 1
+    assert adapter.summary.candidate_updates_sent == 1
+    assert adapter.summary.actions_taken == 1
+    assert adapter.summary.no_action_needed == 0
+    assert run_actions_by_candidate("run_dup_status") == {"cand_david": 1}
+
+
+def test_redundant_create_human_decision_creates_one_decision_and_one_counter():
+    agent, adapter = build_agent_for("run_dup_decision")
+
+    first = agent.tool.create_human_decision(candidate_id="cand_emily")
+    second = agent.tool.create_human_decision(candidate_id="cand_emily")
+
+    assert "created" in tool_payload(first)
+    assert "already_handled" in tool_payload(second)
+    assert len(repository.decisions) == 1
+    assert adapter.summary.human_decisions_created == 1
+    assert adapter.summary.actions_taken == 1
+    assert adapter.summary.no_action_needed == 0
+    assert repository.candidate("cand_emily").human_decision_status == "pending"
+    assert run_actions_by_candidate("run_dup_decision") == {"cand_emily": 1}
+
+
+def test_redundant_schedule_interview_after_human_advance_schedules_once():
+    with TestClient(app) as client:
+        DeterministicAgentRunner(repository).run()
+        decision_id = repository.open_decision_for("cand_emily").id
+        assert (
+            client.post(
+                f"/api/decisions/{decision_id}/resolve", json={"resolution": "ADVANCE"}
+            ).status_code
+            == 200
+        )
+    agent, adapter = build_agent_for("run_dup_schedule")
+    slots_before = len(repository.available_slots())
+
+    first = agent.tool.schedule_interview(candidate_id="cand_emily", slot_id="slot_panel_01")
+    second = agent.tool.schedule_interview(candidate_id="cand_emily", slot_id="slot_panel_02")
+
+    assert "scheduled" in tool_payload(first)
+    assert second["status"] == "success"
+    assert "already_handled" in tool_payload(second)
+    assert adapter.summary.interviews_scheduled == 1
+    assert adapter.summary.actions_taken == 1
+    assert len(repository.available_slots()) == slots_before - 1
+    assert repository.candidate("cand_emily").stage == "Panel Interview"
+    assert run_actions_by_candidate("run_dup_schedule") == {"cand_emily": 1}
+
+
+def test_different_terminal_tool_after_a_terminal_outcome_is_also_already_handled():
+    agent, adapter = build_agent_for("run_cross_terminal")
+
+    agent.tool.send_feedback_reminder(candidate_id="cand_sarah", interviewer_id="int_alex")
+    no_action = agent.tool.record_no_action(candidate_id="cand_sarah")
+    status = agent.tool.send_candidate_status_update(candidate_id="cand_sarah")
+    decision = agent.tool.create_human_decision(candidate_id="cand_sarah")
+
+    for result in (no_action, status, decision):
+        assert result["status"] == "success"
+        assert "already_handled" in tool_payload(result)
+    assert adapter.summary.actions_taken == 1
+    assert adapter.summary.no_action_needed == 0
+    assert repository.open_decision_for("cand_sarah") is None
+    assert run_actions_by_candidate("run_cross_terminal") == {"cand_sarah": 1}
+
+
+def test_inspection_tools_remain_callable_after_terminal_outcome():
+    agent, _ = build_agent_for("run_reinspect")
+    agent.tool.record_no_action(candidate_id="cand_marcus")
+
+    for _ in range(2):
+        assert agent.tool.get_candidate(candidate_id="cand_marcus")["status"] == "success"
+        assert agent.tool.get_interview_feedback(candidate_id="cand_marcus")["status"] == "success"
+        assert (
+            agent.tool.get_interviewer_availability(candidate_id="cand_marcus")["status"]
+            == "success"
+        )
+        assert agent.tool.get_active_candidates()["status"] == "success"
+
+
+def test_assert_complete_rejects_internally_duplicated_terminal_records():
+    from candidateloop.models import AgentAction
+
+    DeterministicAgentRunner(repository).run()
+    agent, adapter = build_agent_for("run_invariant")
+    agent.tool.send_feedback_reminder(candidate_id="cand_sarah", interviewer_id="int_alex")
+    for candidate_id in ("cand_david", "cand_emily", "cand_marcus"):
+        agent.tool.record_no_action(candidate_id=candidate_id)
+    adapter.assert_complete()
+
+    # Bypass the adapter entirely to simulate an internal violation.
+    adapter.operations.record_action(
+        AgentAction(
+            id="action_forged_duplicate",
+            run_id="run_invariant",
+            candidate_id="cand_david",
+            event_type="no_action",
+            tool="record_agent_note",
+            observed="x",
+            reason="x",
+            action="x",
+            result="x",
+            created_at=adapter.now,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="more than one terminal outcome.*cand_david"):
+        adapter.assert_complete()
+
+
+def test_internal_duplicate_terminal_record_fails_run_and_rolls_back(monkeypatch):
+    original_record = StrandsRecruitingToolAdapter._record
+
+    def record_twice(self, candidate_id, *args, **kwargs):
+        # Simulate a bug that writes two run records while marking the candidate handled once.
+        original_record(self, candidate_id, *args, **kwargs)
+        self.handled_candidate_ids.discard(candidate_id)
+        original_record(self, candidate_id, *args, **kwargs)
+
+    monkeypatch.setattr(StrandsRecruitingToolAdapter, "_record", record_twice)
+    runner = strands_runner(*safe_seeded_pass("dup_"))
+
+    with pytest.raises(AgentExecutionError, match="rolled back"):
+        runner.run()
+
+    assert repository.actions == {}
+    assert repository.communications == {}
+    assert repository.decisions == {}

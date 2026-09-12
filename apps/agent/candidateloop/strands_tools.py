@@ -13,12 +13,19 @@ from candidateloop.policies import (
 from candidateloop.repository import InMemoryRepository
 from candidateloop.tools import RecruitingTools
 
-STRANDS_TOOL_NAMES = frozenset(
+INSPECTION_TOOL_NAMES = frozenset(
     {
         "get_active_candidates",
         "get_candidate",
         "get_interview_feedback",
         "get_interviewer_availability",
+    }
+)
+
+# Terminal tools close a candidate's workflow for the run. Each candidate may receive exactly
+# one terminal outcome per run; redundant calls are answered structurally, never by the model.
+TERMINAL_TOOL_NAMES = frozenset(
+    {
         "send_feedback_reminder",
         "send_candidate_status_update",
         "schedule_interview",
@@ -26,6 +33,10 @@ STRANDS_TOOL_NAMES = frozenset(
         "record_no_action",
     }
 )
+
+STRANDS_TOOL_NAMES = INSPECTION_TOOL_NAMES | TERMINAL_TOOL_NAMES
+
+ALREADY_HANDLED_REASON = "candidate already received a terminal outcome for this run"
 
 FORBIDDEN_AGENT_TOOL_TERMS = frozenset(
     {"advance", "hold", "reject", "hire", "rank", "score", "resolve_decision"}
@@ -57,6 +68,7 @@ class StrandsRecruitingToolAdapter:
         if missing:
             missing_ids = ", ".join(sorted(missing))
             raise RuntimeError(f"Strands run did not handle active candidates: {missing_ids}")
+        self._assert_one_terminal_outcome_per_candidate()
         pending_work: set[str] = set()
         for candidate_id in self.active_candidate_ids:
             candidate = self._candidate(candidate_id)
@@ -85,6 +97,35 @@ class StrandsRecruitingToolAdapter:
         if pending_work:
             pending_ids = ", ".join(sorted(pending_work))
             raise RuntimeError(f"Strands run left safe operational work pending: {pending_ids}")
+
+    def _assert_one_terminal_outcome_per_candidate(self) -> None:
+        """Invariant: every active candidate has exactly one AgentAction for this run.
+
+        The tool-level guard makes duplicates unreachable through the model; this re-checks
+        the stored run records so any internal violation fails the run and triggers rollback.
+        """
+        assert self.active_candidate_ids is not None
+        counts: dict[str, int] = {}
+        for action in self.repository.actions.values():
+            if action.run_id == self.run_id:
+                counts[action.candidate_id] = counts.get(action.candidate_id, 0) + 1
+        duplicates = sorted(cid for cid, count in counts.items() if count > 1)
+        if duplicates:
+            raise RuntimeError(
+                "Strands run recorded more than one terminal outcome for candidates: "
+                + ", ".join(duplicates)
+            )
+        unexpected = sorted(set(counts) - self.active_candidate_ids)
+        if unexpected:
+            raise RuntimeError(
+                "Strands run recorded outcomes for non-active candidates: " + ", ".join(unexpected)
+            )
+        total = sum(counts.values())
+        if total != len(self.active_candidate_ids):
+            raise RuntimeError(
+                f"Strands run recorded {total} terminal outcomes for "
+                f"{len(self.active_candidate_ids)} active candidates"
+            )
 
     def build(self) -> list[Any]:
         """Create stateful Strands function tools bound to this single run."""
@@ -150,6 +191,8 @@ class StrandsRecruitingToolAdapter:
                 candidate_id: Candidate with overdue pending feedback.
                 interviewer_id: Interviewer whose feedback is pending.
             """
+            if self._already_handled(candidate_id):
+                return self._already_handled_response()
             candidate = self._candidate(candidate_id)
             feedback = self.operations.get_interview_feedback(candidate_id)
             missing_count = sum(item.status == "pending" for item in feedback)
@@ -186,6 +229,8 @@ class StrandsRecruitingToolAdapter:
             Args:
                 candidate_id: Candidate identifier returned by get_active_candidates.
             """
+            if self._already_handled(candidate_id):
+                return self._already_handled_response()
             candidate = self._candidate(candidate_id)
             days_waiting = (self.now - candidate.last_candidate_contact_at).days
             communication = self.operations.send_candidate_status_update(candidate_id)
@@ -219,6 +264,8 @@ class StrandsRecruitingToolAdapter:
                 candidate_id: Candidate in Panel Scheduling after human Advance.
                 slot_id: Available slot returned by get_interviewer_availability.
             """
+            if self._already_handled(candidate_id):
+                return self._already_handled_response()
             slot = self.operations.schedule_interview(candidate_id, slot_id)
             self._record(
                 candidate_id,
@@ -240,6 +287,8 @@ class StrandsRecruitingToolAdapter:
             Args:
                 candidate_id: Candidate whose required interview feedback is complete.
             """
+            if self._already_handled(candidate_id):
+                return self._already_handled_response()
             candidate = self._candidate(candidate_id)
             existing = self.repository.open_decision_for(candidate_id)
             decision = self.operations.create_human_decision(
@@ -276,6 +325,8 @@ class StrandsRecruitingToolAdapter:
             Args:
                 candidate_id: Candidate identifier returned by get_active_candidates.
             """
+            if self._already_handled(candidate_id):
+                return self._already_handled_response()
             candidate = self._candidate(candidate_id)
             feedback = self.operations.get_interview_feedback(candidate_id)
             if missing_feedback(candidate, feedback, self.now):
@@ -316,11 +367,18 @@ class StrandsRecruitingToolAdapter:
             record_no_action,
         ]
         names = {item.tool_name for item in tools}
-        if names != STRANDS_TOOL_NAMES:
+        if names != INSPECTION_TOOL_NAMES | TERMINAL_TOOL_NAMES:
             raise RuntimeError("Strands recruiting tool allowlist does not match registered tools")
         if any(term in name for term in FORBIDDEN_AGENT_TOOL_TERMS for name in names):
             raise RuntimeError("A forbidden hiring-judgment tool was registered")
         return tools
+
+    def _already_handled(self, candidate_id: str) -> bool:
+        return candidate_id in self.handled_candidate_ids
+
+    @staticmethod
+    def _already_handled_response() -> dict[str, str]:
+        return {"status": "already_handled", "reason": ALREADY_HANDLED_REASON}
 
     def _candidate(self, candidate_id: str):
         candidate = self.repository.candidate(candidate_id)
@@ -350,6 +408,10 @@ class StrandsRecruitingToolAdapter:
         action: str,
         result: str,
     ) -> None:
+        # Defense in depth behind the tool-level guard: a second terminal record for the same
+        # candidate is a programming error, not a model choice, so it must never be stored.
+        if candidate_id in self.handled_candidate_ids:
+            raise RuntimeError(f"Candidate {candidate_id} already has a terminal outcome this run")
         self.handled_candidate_ids.add(candidate_id)
         self.operations.record_action(
             AgentAction(
