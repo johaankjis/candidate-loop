@@ -46,9 +46,9 @@ function StagePipeline({ stage }: { stage: string }) {
             <span
               className={`block rounded-sm ${
                 done
-                  ? 'mt-1 h-0.5 bg-foreground/85'
+                  ? 'mt-1 h-0.5 bg-foreground/70'
                   : active
-                    ? 'h-1.5 bg-[oklch(0.52_0.12_252)]'
+                    ? 'h-1.5 bg-agent'
                     : 'mt-1 h-0.5 bg-border'
               }`}
               aria-hidden="true"
@@ -59,7 +59,7 @@ function StagePipeline({ stage }: { stage: string }) {
                   ? 'font-semibold text-foreground'
                   : done
                     ? 'text-muted-foreground'
-                    : 'text-muted-foreground/60'
+                    : 'text-subtle'
               }`}
             >
               {step}
@@ -81,13 +81,13 @@ function Fact({
   attention?: boolean;
 }) {
   return (
-    <div className="min-w-0 border-border px-4 first:pl-0 sm:border-l sm:first:border-l-0">
-      <dt className="truncate text-xs font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+    <div className="min-w-0 border-border sm:border-l sm:px-4 sm:first:border-l-0 sm:first:pl-0">
+      <dt className="truncate text-[11px] font-semibold uppercase tracking-[0.07em] text-subtle">
         {label}
       </dt>
       <dd
         className={`mt-1 text-sm tabular-nums ${
-          attention ? 'font-semibold text-amber-800' : 'text-foreground'
+          attention ? 'font-semibold text-waiting' : 'text-foreground'
         }`}
       >
         {value}
@@ -124,8 +124,18 @@ export function CandidateDetail({
         ? `${titleCase(candidate.last_human_resolution)} by you`
         : 'None pending';
 
+  const paused = candidate.human_decision_status === 'pending';
+
   return (
     <section className="border-b border-border px-5 py-4 sm:px-6">
+      {paused && (
+        <p className="mb-3 border-l-2 border-agent bg-agent/10 px-3 py-2 text-xs leading-5 text-muted-foreground">
+          <span className="font-semibold text-agent">
+            CandidateLoop paused here.
+          </span>{' '}
+          Evidence is complete; the next step is your call.
+        </p>
+      )}
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">

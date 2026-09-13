@@ -14,7 +14,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: 'CandidateLoop — Recruiting Operations',
-  description: 'An autonomous recruiting operations agent with human-controlled hiring decisions.',
+  description:
+    'An autonomous recruiting operations agent with human-controlled hiring decisions.',
 };
 
 export default function RootLayout({
@@ -23,7 +24,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

@@ -356,7 +356,7 @@ export function RemoveCandidateDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogMedia className="bg-red-50 text-destructive">
+          <AlertDialogMedia className="bg-destructive/15 text-destructive">
             <Trash2 aria-hidden="true" />
           </AlertDialogMedia>
           <AlertDialogTitle>
