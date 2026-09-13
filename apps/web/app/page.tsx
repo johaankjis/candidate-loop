@@ -186,7 +186,7 @@ export default function Home() {
 
         <div
           data-area="control"
-          className="min-h-0 border-t border-border lg:border-l lg:border-t-0 lg:overflow-y-auto"
+          className="min-h-0 border-t border-border lg:flex lg:flex-col lg:border-l lg:border-t-0 lg:overflow-y-auto"
         >
           <AgentConsole
             phase={loop.phase}
