@@ -1,6 +1,7 @@
 'use client';
 
 import { Sparkles } from 'lucide-react';
+import Image from 'next/image';
 import { useState } from 'react';
 import { ActivityFeed } from '@/components/candidateloop/activity-feed';
 import { AgentConsole } from '@/components/candidateloop/agent-console';
@@ -124,7 +125,14 @@ export default function Home() {
     <main className="flex min-h-dvh flex-col bg-background text-foreground lg:h-dvh lg:overflow-hidden">
       <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-card px-4 py-2 sm:px-5">
         <div className="mr-auto flex min-w-0 items-center gap-2">
-          <Sparkles className="size-4 shrink-0 text-agent" aria-hidden="true" />
+          <Image
+            src="/candidateloop-logo.png"
+            alt=""
+            width={32}
+            height={32}
+            className="size-8 shrink-0 object-contain"
+            aria-hidden="true"
+          />
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
             <span className="shrink-0 text-sm font-semibold tracking-[-0.012em]">
               CandidateLoop

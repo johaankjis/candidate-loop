@@ -230,3 +230,31 @@ This file records handoffs between Claude Code, Codex, Antigravity, and the huma
 
 - The console cannot accept free-form instructions because the backend exposes no conversational endpoint; it echoes the one supported instruction instead.
 - Backend untouched; no HANDOFF changes to safety, scheduling, or decision semantics.
+
+## 2026-09-13 — CODEX — CandidateLoop Logo
+
+### Completed
+
+- Added the supplied CandidateLoop mark to the existing header and configured it as the standard and Apple browser icon.
+- Preserved the existing title, subtitle, theme, header wrapping, and application behavior.
+
+### Files changed
+
+- `apps/web/app/page.tsx`, `apps/web/app/layout.tsx`, and `apps/web/public/candidateloop-logo.png`.
+
+### Tests run
+
+- `npm run format`, `npm run lint`, `npx tsc --noEmit`, and `npm run build` — pass.
+- Local Chrome QA at 1440px, 768px, and 390px; rendered icon metadata and PNG response verified.
+
+### Known issues
+
+- Vinext build continues to emit its existing Node `module.register()` deprecation warning.
+
+### Recommended next step
+
+- Review the uncommitted logo/favicon diff before committing.
+
+### Important assumptions
+
+- The checkerboard in the supplied JPEG was a baked-in background, so the mark was extracted to a transparent PNG for production use.
