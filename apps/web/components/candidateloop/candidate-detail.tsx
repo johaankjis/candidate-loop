@@ -12,9 +12,15 @@ import {
   STAGE_PIPELINE,
   formatDayTime,
   stageIndex,
-  titleCase,
 } from '@/lib/candidateloop/format';
-import type { Candidate } from '@/lib/candidateloop/types';
+import type { Candidate, DecisionResolution } from '@/lib/candidateloop/types';
+
+/** Past-tense wording for a recorded recruiter resolution; the API value itself is unchanged. */
+const RESOLUTION_LABEL: Record<DecisionResolution, string> = {
+  ADVANCE: 'Advanced by you',
+  HOLD: 'Held by you',
+  REJECT: 'Rejected by you',
+};
 
 function StagePipeline({ stage }: { stage: string }) {
   const current = stageIndex(stage);
@@ -121,7 +127,7 @@ export function CandidateDetail({
     candidate.human_decision_status === 'pending'
       ? 'Ready for review'
       : candidate.last_human_resolution
-        ? `${titleCase(candidate.last_human_resolution)} by you`
+        ? RESOLUTION_LABEL[candidate.last_human_resolution]
         : 'None pending';
 
   const paused = candidate.human_decision_status === 'pending';

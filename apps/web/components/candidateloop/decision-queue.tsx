@@ -156,7 +156,7 @@ export function DecisionQueue({
 
   return (
     <section
-      className={`min-h-full ${hasPending ? 'bg-card' : 'bg-background'}`}
+      className={`lg:flex-1 ${hasPending ? 'bg-card' : 'bg-background'}`}
       aria-label="Human decisions"
     >
       <div className="flex min-h-10 items-center border-b border-border px-3.5 py-2">
