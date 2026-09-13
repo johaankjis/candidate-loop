@@ -16,6 +16,22 @@ export const metadata: Metadata = {
   title: 'CandidateLoop — Recruiting Operations',
   description:
     'An autonomous recruiting operations agent with human-controlled hiring decisions.',
+  icons: {
+    icon: [
+      {
+        url: '/candidateloop-logo.png',
+        type: 'image/png',
+        sizes: '512x512',
+      },
+    ],
+    apple: [
+      {
+        url: '/candidateloop-logo.png',
+        type: 'image/png',
+        sizes: '512x512',
+      },
+    ],
+  },
 };
 
 export default function RootLayout({
