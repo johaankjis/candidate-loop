@@ -258,3 +258,35 @@ This file records handoffs between Claude Code, Codex, Antigravity, and the huma
 ### Important assumptions
 
 - The checkerboard in the supplied JPEG was a baked-in background, so the mark was extracted to a transparent PNG for production use.
+
+## 2026-09-14 — CODEX — Minimal Slack Events Integration
+
+### Completed
+
+- Added signed Slack Events API handling for app mentions and direct messages with a five-minute replay window, bot/subtype filtering, and bounded in-memory `event_id` deduplication.
+- Added a minimal `chat.postMessage` client plus safe attention, shared agent-run, decision-boundary, and read-only candidate responses over the existing repository.
+- Documented Slack environment variables, events, scopes, and the Cloudflare Tunnel event URL.
+
+### Files changed
+
+- `apps/agent/candidateloop/slack.py`, `apps/agent/api/main.py`, and `apps/agent/tests/test_slack.py`.
+- `.env.example`, `README.md`, and `HANDOFF.md`.
+
+### Tests run
+
+- Backend Ruff format/check and full pytest suite — 101 passed.
+- Frontend `npm run lint` and `npm run build` — pass.
+- `git diff --check` — pass.
+
+### Known issues
+
+- Slack deduplication is intentionally process-local and resets when the API process restarts.
+- The existing upstream Starlette/AnyIO and Vinext/Node deprecation warnings remain.
+
+### Recommended next step
+
+- Configure/install the Slack app, expose the backend through the existing Cloudflare Tunnel, and verify one app mention plus one direct-message run against Slack.
+
+### Important assumptions
+
+- Slack remains an adapter over the shared in-memory repository and `build_agent_runner`; it has no decision-resolution or scheduling bypass capability.

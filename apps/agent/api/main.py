@@ -1,8 +1,9 @@
+import json
 import os
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from candidateloop.config import (
@@ -20,8 +21,15 @@ from candidateloop.models import (
 )
 from candidateloop.repository import PendingHumanDecisionError, repository
 from candidateloop.runner import build_agent_runner
+from candidateloop.slack import (
+    SlackAdapter,
+    SlackConfigurationError,
+    SlackSettings,
+    verify_slack_signature,
+)
 
 DEFAULT_CORS_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")
+slack_adapter = SlackAdapter(repository)
 
 
 def cors_origins_from_env() -> list[str]:
@@ -184,6 +192,42 @@ def run_agent():
         raise HTTPException(status_code=503, detail=str(error)) from error
     except AgentExecutionError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post("/api/slack/events")
+async def slack_events(request: Request, background_tasks: BackgroundTasks):
+    """Authenticate and quickly acknowledge Slack Events API envelopes."""
+    raw_body = await request.body()
+    try:
+        settings = SlackSettings.from_env()
+    except SlackConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    if not verify_slack_signature(
+        raw_body,
+        request.headers.get("X-Slack-Request-Timestamp"),
+        request.headers.get("X-Slack-Signature"),
+        settings.signing_secret,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid or stale Slack request signature")
+
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError as error:
+        raise HTTPException(status_code=400, detail="Invalid Slack event payload") from error
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid Slack event payload")
+
+    if payload.get("type") == "url_verification":
+        challenge = payload.get("challenge")
+        if not isinstance(challenge, str):
+            raise HTTPException(status_code=400, detail="Slack challenge is missing")
+        return {"challenge": challenge}
+
+    retry_num = request.headers.get("X-Slack-Retry-Num")
+    if slack_adapter.should_process(payload, retry_num):
+        background_tasks.add_task(slack_adapter.process_event, payload, settings.bot_token)
+    return {"ok": True}
 
 
 @app.post("/api/decisions/{decision_id}/resolve")

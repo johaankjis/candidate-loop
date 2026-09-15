@@ -52,6 +52,31 @@ npm run build
 For the exact live Bedrock smoke-test command and required environment variables, see the
 [agent service README](apps/agent/README.md#live-amazon-bedrock-smoke-test).
 
+## Slack setup
+
+CandidateLoop can receive Slack Events API messages through the same FastAPI service, shared
+workflow repository, and existing agent-run path. Configure these environment variables without
+committing their values:
+
+```bash
+SLACK_BOT_TOKEN=<your bot token>
+SLACK_SIGNING_SECRET=<your signing secret>
+```
+
+Set the Slack Event Subscription request URL to the publicly reachable Cloudflare Tunnel URL:
+
+```text
+https://<your-cloudflare-tunnel-host>/api/slack/events
+```
+
+The endpoint is `POST /api/slack/events`. Subscribe the bot to `app_mention` and `message.im`, and
+grant these bot token scopes: `app_mentions:read`, `chat:write`, `im:history`, `im:read`,
+`im:write`, and `channels:history`.
+
+Slack can request safe operational runs and read current workflow state, but it cannot Advance,
+Hold, Reject, Hire, rank, or score candidates. Those dispositions remain exclusive to the
+CandidateLoop human decision workflow.
+
 ## Local demo path
 
 1. Reset the demo to restore Sarah, David, Emily, and Marcus.
